@@ -5,7 +5,7 @@
 
   const toggle = document.getElementById("watermark-toggle");
 
-  chrome.storage.sync.get({ watermark: true }, (res) => {
+  chrome.storage.sync.get({ watermark: false }, (res) => {
     toggle.checked = !!res.watermark;
   });
 

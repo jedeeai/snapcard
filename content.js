@@ -23,8 +23,8 @@
     btn.className = BTN_CLASS;
     btn.setAttribute("role", "button");
     btn.setAttribute("tabindex", "0");
-    btn.setAttribute("aria-label", "Generate card");
-    btn.title = "Generate card";
+    btn.setAttribute("aria-label", "生成卡片");
+    btn.title = "生成卡片";
     Object.assign(btn.style, {
       display: "flex",
       alignItems: "center",
@@ -321,9 +321,9 @@
   function getWatermarkSetting() {
     return new Promise((resolve) => {
       try {
-        chrome.storage.sync.get({ watermark: true }, (res) => resolve(!!res.watermark));
+        chrome.storage.sync.get({ watermark: false }, (res) => resolve(!!res.watermark));
       } catch (_) {
-        resolve(true);
+        resolve(false);
       }
     });
   }
@@ -506,9 +506,7 @@
         fontSize: "13px",
         lineHeight: "1.5",
       });
-      notice.innerHTML =
-        "This post is truncated — open the full post first for a complete card.<br>" +
-        "这条推文被折叠了，建议先点开推文全文再生成，当前只包含可见部分。";
+      notice.textContent = "这条推文被折叠了，建议先点开推文全文再生成，当前只包含可见部分。";
       panel.appendChild(notice);
     }
 
@@ -544,7 +542,7 @@
     rebuildCard();
 
     // ----- style selector -----
-    const STYLE_LABELS = { white: "White", dark: "Dark", wallpaper: "Wallpaper" };
+    const STYLE_LABELS = { white: "白色", dark: "黑色", wallpaper: "壁纸" };
     const styleRow = document.createElement("div");
     Object.assign(styleRow.style, { display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" });
 
@@ -597,7 +595,7 @@
     // Upload / reset custom wallpaper background — only shown in Wallpaper mode.
     const uploadLabel = document.createElement("label");
     Object.assign(uploadLabel.style, { fontSize: "12px", color: "#1d9bf0", cursor: "pointer" });
-    uploadLabel.textContent = "Upload background";
+    uploadLabel.textContent = "上传背景";
     const fileInput = document.createElement("input");
     fileInput.type = "file";
     fileInput.accept = "image/*";
@@ -606,7 +604,7 @@
 
     const resetBtn = document.createElement("button");
     resetBtn.type = "button";
-    resetBtn.textContent = "Reset";
+    resetBtn.textContent = "恢复默认";
     Object.assign(resetBtn.style, {
       border: "none",
       background: "transparent",
@@ -623,14 +621,14 @@
     fileInput.addEventListener("change", async () => {
       const file = fileInput.files && fileInput.files[0];
       if (!file) return;
-      bgStatus.textContent = "Processing…";
+      bgStatus.textContent = "处理中…";
       try {
         const dataUrl = await resizeImageFileToDataUrl(file);
         await setCustomBackground(dataUrl);
         state.customBg = dataUrl;
         bgStatus.textContent = "";
       } catch (_) {
-        bgStatus.textContent = "Upload failed";
+        bgStatus.textContent = "上传失败";
       }
       rebuildCard();
     });
@@ -672,7 +670,7 @@
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       const labelText = document.createElement("span");
-      labelText.textContent = "Translate";
+      labelText.textContent = "翻译";
       label.appendChild(checkbox);
       label.appendChild(labelText);
       leftControls.appendChild(label);
@@ -680,7 +678,7 @@
 
       checkbox.addEventListener("change", async () => {
         if (checkbox.checked) {
-          statusText.textContent = "Translating…";
+          statusText.textContent = "翻译中…";
           try {
             const res = await chrome.runtime.sendMessage({ type: "translate", text: data.text });
             if (res && res.ok) {
@@ -722,10 +720,10 @@
       return btn;
     }
 
-    const downloadBtn = makeButton("Download PNG", true);
+    const downloadBtn = makeButton("下载 PNG", true);
     downloadBtn.addEventListener("click", async () => {
       const originalLabel = downloadBtn.textContent;
-      downloadBtn.textContent = "Rendering…";
+      downloadBtn.textContent = "生成中…";
       downloadBtn.disabled = true;
       try {
         const { dataUrl } = await window.SnapCard.renderCardToPng(state.exportEl, 2);
@@ -734,7 +732,7 @@
         a.download = buildFilename(data.handle);
         a.click();
       } catch (e) {
-        downloadBtn.textContent = "Render failed";
+        downloadBtn.textContent = "渲染失败";
         setTimeout(() => (downloadBtn.textContent = originalLabel), 1500);
         downloadBtn.disabled = false;
         return;
@@ -743,16 +741,16 @@
       downloadBtn.disabled = false;
     });
 
-    const copyBtn = makeButton("Copy image", false);
+    const copyBtn = makeButton("复制图片", false);
     copyBtn.addEventListener("click", async () => {
       const originalLabel = copyBtn.textContent;
       copyBtn.disabled = true;
       try {
         const { blob } = await window.SnapCard.renderCardToPng(state.exportEl, 2);
         await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-        copyBtn.textContent = "Copied ✓";
+        copyBtn.textContent = "已复制 ✓";
       } catch (e) {
-        copyBtn.textContent = "Copy failed";
+        copyBtn.textContent = "复制失败";
       }
       setTimeout(() => {
         copyBtn.textContent = originalLabel;
@@ -760,7 +758,7 @@
       }, 1500);
     });
 
-    const closeBtn = makeButton("Close", false);
+    const closeBtn = makeButton("关闭", false);
     closeBtn.addEventListener("click", () => closeModal(host));
 
     rightControls.appendChild(downloadBtn);

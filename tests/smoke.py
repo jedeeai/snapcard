@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # SnapCard smoke test: mock page + mock chrome API, playwright headless.
+# UI is Simplified Chinese, so this test matches on the actual on-screen
+# button text (下载 PNG, 黑色, 壁纸, ...) rather than English labels.
 # No login, no real x.com — verifies:
-#   1) the "Generate card" button gets injected into the tweet's action bar
+#   1) the "生成卡片" button gets injected into the tweet's action bar
 #   2) clicking it opens the preview modal (shadow DOM) with the card's name text
-#   3) clicking "Download PNG" runs the full render pipeline without a JS error
+#   3) clicking "下载 PNG" runs the full render pipeline without a JS error
 import os
 import sys
 
@@ -77,21 +79,21 @@ with sync_playwright() as p:
     if line_count != 1:
         fails.append(f"expected mock tweet body to render as 1 line, got {line_count} (text: {body_text!r})")
 
-    # ---- 3) click Download PNG, expect no JS error ----
+    # ---- 3) click 下载 PNG, expect no JS error ----
     clicked = page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
           if (!host || !host.shadowRoot) return false;
           const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
-          const btn = btns.find((b) => b.textContent.trim() === 'Download PNG');
+          const btn = btns.find((b) => b.textContent.trim() === '下载 PNG');
           if (!btn) return false;
           btn.click();
           return true;
         }"""
     )
-    print("3) Download PNG button clicked:", clicked)
+    print("3) 下载 PNG button clicked:", clicked)
     if not clicked:
-        fails.append("Download PNG button not found in modal")
+        fails.append("下载 PNG button not found in modal")
     else:
         # rendering is async (image inlining + canvas); give it time to finish
         page.wait_for_timeout(1500)
@@ -99,13 +101,13 @@ with sync_playwright() as p:
             """() => {
               const host = document.getElementById('snapcard-host');
               const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
-              const btn = btns.find((b) => b.textContent.trim().startsWith('Download') || b.textContent.trim() === 'Render failed');
+              const btn = btns.find((b) => b.textContent.trim() === '下载 PNG' || b.textContent.trim() === '生成中…' || b.textContent.trim() === '渲染失败');
               return btn ? btn.textContent.trim() : null;
             }"""
         )
         print("   post-render button label:", label)
-        if label == "Render failed":
-            fails.append("Download PNG render pipeline reported failure")
+        if label == "渲染失败":
+            fails.append("下载 PNG render pipeline reported failure (渲染失败)")
 
     # ---- 4) the render pipeline must actually paint content, not a blank canvas ----
     # (a previous bug had the export succeed with no error while producing an
@@ -140,15 +142,15 @@ with sync_playwright() as p:
           const host = document.getElementById('snapcard-host');
           const shadow = host.shadowRoot;
           const btns = Array.from(shadow.querySelectorAll('button'));
-          return btns.map((b) => b.textContent.trim()).filter((t) => ['White', 'Dark', 'Wallpaper'].includes(t));
+          return btns.map((b) => b.textContent.trim()).filter((t) => ['白色', '黑色', '壁纸'].includes(t));
         }"""
     )
     print("5) style selector options found:", style_labels)
-    for expected in ("White", "Dark", "Wallpaper"):
+    for expected in ("白色", "黑色", "壁纸"):
         if expected not in style_labels:
             fails.append(f"style selector missing '{expected}' option")
 
-    # ---- 6) switching to Dark actually changes the card's background color ----
+    # ---- 6) switching to 黑色 (Dark) actually changes the card's background color ----
     bg_before = page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
@@ -161,7 +163,7 @@ with sync_playwright() as p:
           const host = document.getElementById('snapcard-host');
           const shadow = host.shadowRoot;
           const btns = Array.from(shadow.querySelectorAll('button'));
-          const btn = btns.find((b) => b.textContent.trim() === 'Dark');
+          const btn = btns.find((b) => b.textContent.trim() === '黑色');
           if (!btn) return false;
           btn.click();
           return true;
@@ -175,15 +177,15 @@ with sync_playwright() as p:
           return cardNode ? getComputedStyle(cardNode).backgroundColor : null;
         }"""
     )
-    print(f"6) Dark clicked={clicked_dark}, background {bg_before!r} -> {bg_after!r}")
+    print(f"6) 黑色 clicked={clicked_dark}, background {bg_before!r} -> {bg_after!r}")
     if not clicked_dark:
-        fails.append("could not click the 'Dark' style button")
+        fails.append("could not click the '黑色' style button")
     elif bg_after != "rgb(0, 0, 0)":
-        fails.append(f"expected card background rgb(0, 0, 0) after switching to Dark, got {bg_after!r}")
+        fails.append(f"expected card background rgb(0, 0, 0) after switching to 黑色, got {bg_after!r}")
     elif bg_before == bg_after:
-        fails.append("card background did not change when switching from White to Dark")
+        fails.append("card background did not change when switching from 白色 to 黑色")
 
-    # ---- 7) switching to Wallpaper actually loads the real background image ----
+    # ---- 7) switching to 壁纸 (Wallpaper) actually loads the real background image ----
     # (mock's chrome.runtime.getURL resolves to the real assets/bg-sequoia.webp
     # on disk — a previous mock stood in a synthetic 1x1 data: URI instead,
     # which is why an earlier screenshot review showed a blank white frame;
@@ -194,7 +196,7 @@ with sync_playwright() as p:
           const host = document.getElementById('snapcard-host');
           const shadow = host.shadowRoot;
           const btns = Array.from(shadow.querySelectorAll('button'));
-          const btn = btns.find((b) => b.textContent.trim() === 'Wallpaper');
+          const btn = btns.find((b) => b.textContent.trim() === '壁纸');
           if (!btn) return false;
           btn.click();
           return true;
@@ -209,9 +211,9 @@ with sync_playwright() as p:
           return { naturalWidth: bg.naturalWidth, naturalHeight: bg.naturalHeight, complete: bg.complete };
         }"""
     )
-    print(f"7) Wallpaper clicked={clicked_wallpaper}, background image: {bg_img_info}")
+    print(f"7) 壁纸 clicked={clicked_wallpaper}, background image: {bg_img_info}")
     if not clicked_wallpaper:
-        fails.append("could not click the 'Wallpaper' style button")
+        fails.append("could not click the '壁纸' style button")
     elif not bg_img_info:
         fails.append("wallpaper background <img data-snapcard-role=wallpaper-bg> not found")
     elif not bg_img_info.get("naturalWidth"):
