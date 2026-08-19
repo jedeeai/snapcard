@@ -374,21 +374,25 @@
     if (media) card.appendChild(media);
 
     // ----- footer ----- (date now lives up in the header row; footer is stats-only)
-    const footer = el("div", {
-      marginTop: "16px",
-      paddingTop: "12px",
-      borderTop: `1px solid ${palette.hairline}`,
-    });
-    footer.dataset.snapcardRole = "footer";
+    // options.hideStats skips the whole footer — divider included — so the
+    // card ends with whatever came before it (body text, or media).
+    if (!options.hideStats) {
+      const footer = el("div", {
+        marginTop: "16px",
+        paddingTop: "12px",
+        borderTop: `1px solid ${palette.hairline}`,
+      });
+      footer.dataset.snapcardRole = "footer";
 
-    const stats = data.stats || {};
-    const statsRow = el("div", { display: "flex", alignItems: "center", gap: "16px" });
-    statsRow.appendChild(statSpan("comment", stats.replies, palette));
-    statsRow.appendChild(statSpan("repost", stats.reposts, palette));
-    statsRow.appendChild(statSpan("heart", stats.likes, palette));
-    statsRow.appendChild(statSpan("views", stats.views, palette));
-    footer.appendChild(statsRow);
-    card.appendChild(footer);
+      const stats = data.stats || {};
+      const statsRow = el("div", { display: "flex", alignItems: "center", gap: "16px" });
+      statsRow.appendChild(statSpan("comment", stats.replies, palette));
+      statsRow.appendChild(statSpan("repost", stats.reposts, palette));
+      statsRow.appendChild(statSpan("heart", stats.likes, palette));
+      statsRow.appendChild(statSpan("views", stats.views, palette));
+      footer.appendChild(statsRow);
+      card.appendChild(footer);
+    }
 
     // ----- watermark -----
     if (options.watermark) {

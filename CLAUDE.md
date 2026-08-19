@@ -32,6 +32,8 @@
 - **操作条按钮主次**：「复制图片」是主按钮（蓝底白字）排第一位，「下载 PNG」次按钮排第二位，「关闭」最后——大多数用户复制完直接粘贴发出去，比下载文件更高频
 - **modal 超高内容处理**：面板本身 `maxHeight:90vh + overflow:auto` 兜底可滚动，操作条就是文档流里的普通子元素，滚动到底才看得到，不做 sticky 底栏（用户明确要求）；溢出时右下角浮一个「复制按钮在下面 ↓」提示胶囊，滚到接近底部（剩余 < 40px）自动淡出
 - **主题记忆链路**：点样式按钮 → `saveStyle()` 立即写 `chrome.storage.sync` key `theme` → 下次 `handleGenerateClick` 里 `getSavedStyle()` 读回来初始化 `state.style` 和按钮选中态，读不到给默认 "white"，全链路已用 smoke.py 关模态框再重开验证过确实生效
+- **隐藏互动数据**：`chrome.storage.sync` key `hideStats`，默认 `false`，跟 `theme`/`wallpaperBg` 同一套记忆模式；`buildCard(data, {hideStats})` 为 true 时整个 footer（含上边框分隔线）都不创建，不是简单 `display:none`，卡片直接以正文/配图收尾
+- **Wallpaper 背景选择**：一开始按用户要求做过 4 张纯 CSS/canvas 渐变生成的内置背景（`WALLPAPER_PAD` 那次之后的版本），当天晚些时候用户又改主意换成 7 张真实壁纸图（`assets/bg-sequoia.webp` + 6 张新图，全部方形 700-1002px webp），**canvas 渐变生成那套代码已整个删除**，改成跟 Sequoia 一样走 `chrome.runtime.getURL(file)` 的统一 `BUILTIN_BACKGROUNDS` 数组（`{id, label, file}`），选中标识存 `storage.sync` key `wallpaperBg`（"sequoia"/"sparrow"/"silver"/"rose-gold"/"albany-gold"/"space-gray"/"gradient-dark"/"custom"），自定义图仍走 `storage.local.customBg` 不变。缩略图行只在 Wallpaper 模式显示，选中项 2px 蓝色描边，未选中 1px 灰色描边（`box-shadow` 模拟，避免描边把布局撑大）；「恢复默认」按钮已按用户要求去掉，点 Sequoia 缩略图等效。
 
 ## X 改版高危点（改版先查这里）
 

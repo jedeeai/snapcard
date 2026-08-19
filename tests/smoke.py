@@ -367,6 +367,112 @@ with sync_playwright() as p:
     elif not reopened.get("darkSelected"):
         fails.append("expected '黑色' style button to show as selected on reopen")
 
+    # ---- 10) "隐藏互动数据" checkbox hides the stats footer, unchecking restores it ----
+    footer_before = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          return !!host.shadowRoot.querySelector('[data-snapcard-role="footer"]');
+        }"""
+    )
+    checked_hide = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const cb = Array.from(host.shadowRoot.querySelectorAll('input[type=checkbox]')).find(
+            (c) => c.nextSibling && c.nextSibling.textContent === '隐藏互动数据'
+          );
+          if (!cb) return false;
+          cb.click();
+          return true;
+        }"""
+    )
+    page.wait_for_timeout(150)
+    footer_after_hide = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          return !!host.shadowRoot.querySelector('[data-snapcard-role="footer"]');
+        }"""
+    )
+    # uncheck again to confirm it restores
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const cb = Array.from(host.shadowRoot.querySelectorAll('input[type=checkbox]')).find(
+            (c) => c.nextSibling && c.nextSibling.textContent === '隐藏互动数据'
+          );
+          cb.click();
+        }"""
+    )
+    page.wait_for_timeout(150)
+    footer_after_restore = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          return !!host.shadowRoot.querySelector('[data-snapcard-role="footer"]');
+        }"""
+    )
+    print(
+        f"10) hideStats: found_checkbox={checked_hide}, footer before={footer_before}, "
+        f"after check={footer_after_hide}, after uncheck={footer_after_restore}"
+    )
+    if not checked_hide:
+        fails.append("could not find/click the '隐藏互动数据' checkbox")
+    if footer_before is not True:
+        fails.append("expected stats footer to be present before checking 隐藏互动数据")
+    if footer_after_hide is not False:
+        fails.append("stats footer still present after checking 隐藏互动数据")
+    if footer_after_restore is not True:
+        fails.append("stats footer did not come back after unchecking 隐藏互动数据")
+
+    # ---- 11) background thumbnail row (Wallpaper mode only): 7 built-ins + upload button = 8 ----
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+          btns.find((b) => b.textContent.trim() === '壁纸').click();
+        }"""
+    )
+    page.wait_for_timeout(300)
+    thumb_count = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const items = Array.from(host.shadowRoot.querySelectorAll('button, label')).filter(
+            (el) => el.style.borderRadius === '50%'
+          );
+          return items.length;
+        }"""
+    )
+    print("11) background thumbnail + upload button count:", thumb_count)
+    if thumb_count < 8:
+        fails.append(f"expected >= 8 round items (7 built-in backgrounds + upload button), got {thumb_count}")
+
+    # ---- 12) switching to bg-gradient-dark actually loads that real file
+    # (naturalWidth 700 is that image's true pixel width on disk — asserting
+    # the exact number, not just >0, proves the *right* file loaded, not just
+    # *some* image) ----
+    clicked_gradient_dark = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const items = Array.from(host.shadowRoot.querySelectorAll('button')).filter(
+            (el) => el.style.borderRadius === '50%' && el.title === 'Gradient Dark 壁纸'
+          );
+          if (!items.length) return false;
+          items[0].click();
+          return true;
+        }"""
+    )
+    page.wait_for_timeout(300)
+    gradient_dark_info = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const bg = host.shadowRoot.querySelector('[data-snapcard-role="wallpaper-bg"]');
+          return bg ? { naturalWidth: bg.naturalWidth, naturalHeight: bg.naturalHeight } : null;
+        }"""
+    )
+    print(f"12) bg-gradient-dark clicked={clicked_gradient_dark}, background image: {gradient_dark_info}")
+    if not clicked_gradient_dark:
+        fails.append("could not find/click the 'Gradient Dark 壁纸' thumbnail")
+    elif not gradient_dark_info or gradient_dark_info.get("naturalWidth") != 700:
+        fails.append(f"expected bg-gradient-dark.webp to load at naturalWidth 700, got {gradient_dark_info}")
+
 if console_errors:
     print("\nconsole errors captured:")
     for e in console_errors:

@@ -372,23 +372,81 @@
     });
   }
 
-  function clearCustomBackground() {
+  // Whether the interaction-stats row (and its divider) is hidden.
+  function getHideStatsSetting() {
     return new Promise((resolve) => {
       try {
-        chrome.storage.local.remove("customBg", () => resolve());
+        chrome.storage.sync.get({ hideStats: false }, (res) => resolve(!!res.hideStats));
       } catch (_) {
-        resolve();
+        resolve(false);
       }
     });
   }
 
-  const DEFAULT_WALLPAPER_PATH = "assets/bg-sequoia.webp";
-  function defaultWallpaperUrl() {
+  function saveHideStats(value) {
     try {
-      return chrome.runtime.getURL(DEFAULT_WALLPAPER_PATH);
+      chrome.storage.sync.set({ hideStats: !!value });
+    } catch (_) {
+      // not fatal — just won't be remembered next time
+    }
+  }
+
+  // ---------- wallpaper background picker ----------
+  // 7 built-in real photos (bundled in assets/), or "custom" (user-uploaded
+  // photo, stored separately in chrome.storage.local as customBg).
+  const BUILTIN_BACKGROUNDS = [
+    { id: "sequoia", label: "Sequoia 壁纸", file: "assets/bg-sequoia.webp" },
+    { id: "sparrow", label: "Sparrow 壁纸", file: "assets/bg-sparrow.webp" },
+    { id: "silver", label: "Silver 壁纸", file: "assets/bg-silver.webp" },
+    { id: "rose-gold", label: "Rose Gold 壁纸", file: "assets/bg-rose-gold.webp" },
+    { id: "albany-gold", label: "Albany Gold 壁纸", file: "assets/bg-albany-gold.webp" },
+    { id: "space-gray", label: "Space Gray 壁纸", file: "assets/bg-space-gray.webp" },
+    { id: "gradient-dark", label: "Gradient Dark 壁纸", file: "assets/bg-gradient-dark.webp" },
+  ];
+
+  function builtinBackgroundUrl(entry) {
+    try {
+      return chrome.runtime.getURL(entry.file);
     } catch (_) {
       return "";
     }
+  }
+
+  // Kept as a plain function (not folded into resolveBackgroundUrl) since
+  // buildWallpaperFrame's fallback and the thumbnail row both want "the
+  // default photo" specifically, independent of whatever bgId is selected.
+  function defaultWallpaperUrl() {
+    return builtinBackgroundUrl(BUILTIN_BACKGROUNDS[0]);
+  }
+
+  function getSavedBackgroundId() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.sync.get({ wallpaperBg: "sequoia" }, (res) => resolve(res.wallpaperBg || "sequoia"));
+      } catch (_) {
+        resolve("sequoia");
+      }
+    });
+  }
+
+  function saveBackgroundId(id) {
+    try {
+      chrome.storage.sync.set({ wallpaperBg: id });
+    } catch (_) {
+      // not fatal — just won't be remembered next time
+    }
+  }
+
+  // Resolves a background id + the current custom upload (if any) to an
+  // actual image URL usable as an <img src>. Every branch already returns
+  // either a data: URL (a custom upload, already inlined) or a
+  // chrome-extension:// URL served from web_accessible_resources (every
+  // built-in) — never a bare path.
+  function resolveBackgroundUrl(bgId, customBg) {
+    if (bgId === "custom") return customBg || defaultWallpaperUrl();
+    const entry = BUILTIN_BACKGROUNDS.find((b) => b.id === bgId);
+    if (entry) return builtinBackgroundUrl(entry);
+    return defaultWallpaperUrl(); // unrecognized id — safe fallback to Sequoia
   }
 
   // Downscale an uploaded image file to a data URL, longest side capped at
@@ -457,12 +515,14 @@
 
   async function handleGenerateClick(article) {
     const data = extractTweetData(article);
-    const [watermark, style, customBg] = await Promise.all([
+    const [watermark, style, customBg, hideStats, bgId] = await Promise.all([
       getWatermarkSetting(),
       getSavedStyle(),
       getCustomBackground(),
+      getHideStatsSetting(),
+      getSavedBackgroundId(),
     ]);
-    openPreviewModal(data, { watermark, style, customBg });
+    openPreviewModal(data, { watermark, style, customBg, hideStats, bgId });
   }
 
   function openPreviewModal(data, options) {
@@ -519,6 +579,8 @@
       translatedText: null,
       style: VALID_STYLES.includes(options.style) ? options.style : "white",
       customBg: options.customBg || null,
+      hideStats: !!options.hideStats,
+      bgId: options.bgId || "sequoia",
       exportEl: null, // the node render.js should actually export (card, or card+wallpaper frame)
     };
 
@@ -530,17 +592,18 @@
     function rebuildCard() {
       previewWrap.innerHTML = "";
       const cardData = Object.assign({}, data, { translatedText: state.translatedText });
+      const cardOptions = { watermark: options.watermark, hideStats: state.hideStats };
       if (state.style === "wallpaper") {
         // Wallpaper is always the white card, framed on a background image.
-        const card = window.SnapCard.buildCard(cardData, { watermark: options.watermark, theme: "white" });
+        const card = window.SnapCard.buildCard(cardData, Object.assign({ theme: "white" }, cardOptions));
         previewWrap.appendChild(card); // mount first — buildWallpaperFrame needs a laid-out node to measure
-        const bgUrl = state.customBg || defaultWallpaperUrl();
+        const bgUrl = resolveBackgroundUrl(state.bgId, state.customBg);
         const frame = window.SnapCard.buildWallpaperFrame(card, bgUrl);
         previewWrap.innerHTML = "";
         previewWrap.appendChild(frame);
         state.exportEl = frame;
       } else {
-        const card = window.SnapCard.buildCard(cardData, { watermark: options.watermark, theme: state.style });
+        const card = window.SnapCard.buildCard(cardData, Object.assign({ theme: state.style }, cardOptions));
         previewWrap.appendChild(card);
         state.exportEl = card;
       }
@@ -601,57 +664,94 @@
     paintStyleButtons();
     styleRow.appendChild(styleBtnRow);
 
-    // Upload / reset custom wallpaper background — only shown in Wallpaper mode.
-    const uploadLabel = document.createElement("label");
-    Object.assign(uploadLabel.style, { fontSize: "12px", color: "#1d9bf0", cursor: "pointer" });
-    uploadLabel.textContent = "上传背景";
-    const fileInput = document.createElement("input");
-    fileInput.type = "file";
-    fileInput.accept = "image/*";
-    fileInput.style.display = "none";
-    uploadLabel.appendChild(fileInput);
+    // Background picker — only shown in Wallpaper mode. A row of small round
+    // thumbnails (built-in photo, 4 built-in gradients, the custom upload if
+    // one exists) plus a small "+" upload button. Rebuilt from scratch on
+    // every selection/upload rather than patched in place — it's cheap and
+    // keeps the "which thumbnail is selected" logic in one place.
+    function renderBgThumbnails() {
+      bgControls.innerHTML = "";
 
-    const resetBtn = document.createElement("button");
-    resetBtn.type = "button";
-    resetBtn.textContent = "恢复默认";
-    Object.assign(resetBtn.style, {
-      border: "none",
-      background: "transparent",
-      color: "#536471",
-      fontSize: "12px",
-      cursor: "pointer",
-      padding: "0",
-      textDecoration: "underline",
-    });
+      const items = BUILTIN_BACKGROUNDS.map((b) => ({ id: b.id, label: b.label, url: builtinBackgroundUrl(b) }));
+      if (state.customBg) items.push({ id: "custom", label: "自定义背景", url: state.customBg });
 
-    const bgStatus = document.createElement("span");
-    Object.assign(bgStatus.style, { fontSize: "12px", color: "#536471" });
+      items.forEach((item) => {
+        const thumb = document.createElement("button");
+        thumb.type = "button";
+        thumb.title = item.label;
+        const selected = state.bgId === item.id;
+        Object.assign(thumb.style, {
+          width: "28px",
+          height: "28px",
+          borderRadius: "50%",
+          flexShrink: "0",
+          backgroundImage: `url("${item.url}")`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          border: selected ? "2px solid #1d9bf0" : "2px solid transparent",
+          boxShadow: selected ? "none" : "0 0 0 1px #eff3f4",
+          padding: "0",
+          cursor: "pointer",
+        });
+        thumb.addEventListener("click", () => {
+          if (state.bgId === item.id) return;
+          state.bgId = item.id;
+          saveBackgroundId(item.id);
+          renderBgThumbnails();
+          rebuildCard();
+        });
+        bgControls.appendChild(thumb);
+      });
 
-    fileInput.addEventListener("change", async () => {
-      const file = fileInput.files && fileInput.files[0];
-      if (!file) return;
-      bgStatus.textContent = "处理中…";
-      try {
-        const dataUrl = await resizeImageFileToDataUrl(file);
-        await setCustomBackground(dataUrl);
-        state.customBg = dataUrl;
-        bgStatus.textContent = "";
-      } catch (_) {
-        bgStatus.textContent = "上传失败";
-      }
-      rebuildCard();
-    });
+      // Small upload button, styled like the round thumbnails.
+      const uploadBtn = document.createElement("label");
+      uploadBtn.title = "上传背景";
+      Object.assign(uploadBtn.style, {
+        width: "28px",
+        height: "28px",
+        borderRadius: "50%",
+        border: "2px dashed #cfd9de",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        flexShrink: "0",
+        color: "#536471",
+        fontSize: "16px",
+        lineHeight: "1",
+      });
+      uploadBtn.textContent = "+";
+      const fileInput = document.createElement("input");
+      fileInput.type = "file";
+      fileInput.accept = "image/*";
+      fileInput.style.display = "none";
+      uploadBtn.appendChild(fileInput);
 
-    resetBtn.addEventListener("click", async () => {
-      await clearCustomBackground();
-      state.customBg = null;
-      bgStatus.textContent = "";
-      rebuildCard();
-    });
+      const bgStatus = document.createElement("span");
+      Object.assign(bgStatus.style, { fontSize: "12px", color: "#536471" });
 
-    bgControls.appendChild(uploadLabel);
-    bgControls.appendChild(resetBtn);
-    bgControls.appendChild(bgStatus);
+      fileInput.addEventListener("change", async () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        bgStatus.textContent = "处理中…";
+        try {
+          const dataUrl = await resizeImageFileToDataUrl(file);
+          await setCustomBackground(dataUrl);
+          state.customBg = dataUrl;
+          state.bgId = "custom";
+          saveBackgroundId("custom");
+          bgStatus.textContent = "";
+        } catch (_) {
+          bgStatus.textContent = "上传失败";
+        }
+        renderBgThumbnails();
+        rebuildCard();
+      });
+
+      bgControls.appendChild(uploadBtn);
+      bgControls.appendChild(bgStatus);
+    }
+    renderBgThumbnails();
     updateBgControlsVisibility();
     styleRow.appendChild(bgControls);
 
@@ -668,7 +768,32 @@
     });
 
     const leftControls = document.createElement("div");
-    Object.assign(leftControls.style, { display: "flex", alignItems: "center", gap: "8px" });
+    Object.assign(leftControls.style, { display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" });
+
+    // "隐藏互动数据" — always available (unlike Translate, which only shows
+    // up for mostly-non-Chinese text), same row/style, remembered like style.
+    const hideStatsLabel = document.createElement("label");
+    Object.assign(hideStatsLabel.style, {
+      display: "flex",
+      alignItems: "center",
+      gap: "6px",
+      fontSize: "13px",
+      color: "#0f1419",
+      cursor: "pointer",
+    });
+    const hideStatsCheckbox = document.createElement("input");
+    hideStatsCheckbox.type = "checkbox";
+    hideStatsCheckbox.checked = state.hideStats;
+    const hideStatsText = document.createElement("span");
+    hideStatsText.textContent = "隐藏互动数据";
+    hideStatsLabel.appendChild(hideStatsCheckbox);
+    hideStatsLabel.appendChild(hideStatsText);
+    hideStatsCheckbox.addEventListener("change", () => {
+      state.hideStats = hideStatsCheckbox.checked;
+      saveHideStats(state.hideStats);
+      rebuildCard();
+    });
+    leftControls.appendChild(hideStatsLabel);
 
     const statusText = document.createElement("span");
     Object.assign(statusText.style, { fontSize: "12px", color: "#536471" });
