@@ -55,14 +55,30 @@
 
   // ---------- formatting ----------
 
-  // "2026年8月19日 10:37" — Chinese date format, 24-hour clock.
+  // Date format follows the UI language (chrome.i18n.getUILanguage()), not a
+  // fixed locale: "2026年8月19日 09:41" for zh-*, "Aug 19, 2026 · 09:41"
+  // (Intl en-US) for everything else. Read fresh on every call (not cached)
+  // so switching the browser's language and reopening the modal picks up
+  // the new format immediately — no reload of this script required.
   function formatTime(iso) {
     if (!iso) return "";
     const d = new Date(iso);
     if (isNaN(d.getTime())) return "";
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
-    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hh}:${mm}`;
+
+    let uiLang = "en";
+    try {
+      uiLang = (chrome.i18n && chrome.i18n.getUILanguage && chrome.i18n.getUILanguage()) || "en";
+    } catch (_) {
+      // chrome.i18n unavailable — fall through to the English format below
+    }
+
+    if (uiLang.toLowerCase().indexOf("zh") === 0) {
+      return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hh}:${mm}`;
+    }
+    const datePart = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(d);
+    return `${datePart} · ${hh}:${mm}`;
   }
 
   // Large-number abbreviation: 1210 -> "1.21K", 2680000 -> "2.68M". Numbers

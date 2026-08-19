@@ -1,0 +1,40 @@
+{
+  "extDescription": { "message": "一键把 X 推文变成分享卡片" },
+  "generateCardButton": { "message": "生成卡片" },
+  "cardGeneratingText": { "message": "卡片生成中，需要等待几秒钟…" },
+  "truncatedNotice": { "message": "这条推文被折叠了，建议先点开推文全文再生成，当前只包含可见部分。" },
+  "styleWhite": { "message": "白色" },
+  "styleDark": { "message": "黑色" },
+  "styleWallpaper": { "message": "壁纸" },
+  "wallpaperSuffix": { "message": "壁纸" },
+  "uploadBackgroundTitle": { "message": "上传背景" },
+  "processingText": { "message": "处理中…" },
+  "customBgLimitText": {
+    "message": "自定义背景最多 $COUNT$ 张，先删一张再传",
+    "placeholders": { "count": { "content": "$1", "example": "6" } }
+  },
+  "uploadFailedText": { "message": "上传失败" },
+  "deleteBgTitle": { "message": "删除这张背景" },
+  "customBgLabel": {
+    "message": "自定义背景 $INDEX$",
+    "placeholders": { "index": { "content": "$1", "example": "1" } }
+  },
+  "moreWallpapers": { "message": "更多壁纸 ▸" },
+  "collapseWallpapers": { "message": "收起 ◂" },
+  "hideStatsLabel": { "message": "隐藏互动数据" },
+  "hideTimeLabel": { "message": "隐藏时间" },
+  "translateLabel": { "message": "翻译" },
+  "translatingText": { "message": "翻译中…" },
+  "translateFailedText": { "message": "翻译服务连不上（国内需代理）" },
+  "copyImageButton": { "message": "复制图片" },
+  "copiedText": { "message": "已复制 ✓" },
+  "copyFailedText": { "message": "复制失败" },
+  "downloadPngButton": { "message": "下载 PNG" },
+  "downloadGeneratingText": { "message": "生成中…" },
+  "renderFailedText": { "message": "渲染失败" },
+  "closeButton": { "message": "关闭" },
+  "scrollHintText": { "message": "复制按钮在下面 ↓" },
+  "watermarkLabel": { "message": "在卡片上显示 SnapCard 署名" },
+  "brandBarText": { "message": "X榜单 xbangdan.com 出品" },
+  "brandLogoAlt": { "message": "X榜单" }
+}

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <title>SnapCard</title>
@@ -117,10 +117,10 @@
   </head>
   <body>
     <h1><img src="icons/icon48.png" alt="" />SnapCard</h1>
-    <p class="desc">一键把 X 推文变成分享卡片。</p>
+    <p class="desc" data-i18n="extDescription">Turn any post on X into a beautiful shareable card.</p>
 
     <div class="row">
-      <label for="watermark-toggle">在卡片上显示 SnapCard 署名</label>
+      <label for="watermark-toggle" data-i18n="watermarkLabel">Show the SnapCard watermark on cards</label>
       <span class="switch">
         <input type="checkbox" id="watermark-toggle" />
         <span class="slider"></span>
@@ -130,8 +130,8 @@
     <footer><a href="https://github.com/" target="_blank" rel="noopener">GitHub</a></footer>
 
     <a class="brand-bar" href="https://xbangdan.com" target="_blank" rel="noopener">
-      <img src="assets/xbangdan-logo.svg" alt="X榜单" />
-      <span>X榜单 xbangdan.com 出品</span>
+      <img src="assets/xbangdan-logo.svg" data-i18n-alt="brandLogoAlt" alt="xbangdan" />
+      <span data-i18n="brandBarText">Made by xbangdan.com</span>
     </a>
 
     <script src="popup.js"></script>

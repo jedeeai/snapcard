@@ -6,6 +6,7 @@
 #   1) the "生成卡片" button gets injected into the tweet's action bar
 #   2) clicking it opens the preview modal (shadow DOM) with the card's name text
 #   3) clicking "下载 PNG" runs the full render pipeline without a JS error
+import json
 import os
 import sys
 
@@ -13,6 +14,16 @@ from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MOCK = "file://" + os.path.join(ROOT, "tests", "mock.html")
+
+# Load the *real* shipped message files (not a hand-copied duplicate) so the
+# mock's chrome.i18n.getMessage() renders exactly what the real extension
+# would — see the i18n mock comment in tests/mock.html. Injected via
+# add_init_script below (i.e. before mock.html's own inline <script>, and
+# therefore before card.js/content.js ever call chrome.i18n.*).
+with open(os.path.join(ROOT, "_locales", "en", "messages.json"), encoding="utf-8") as f:
+    I18N_EN = json.load(f)
+with open(os.path.join(ROOT, "_locales", "zh_CN", "messages.json"), encoding="utf-8") as f:
+    I18N_ZH_CN = json.load(f)
 
 fails = []
 console_errors = []
@@ -25,6 +36,11 @@ with sync_playwright() as p:
     page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
     page.on("pageerror", lambda exc: page_errors.append(str(exc)))
     page.on("download", lambda d: None)  # avoid hanging on the data: URL download
+
+    page.add_init_script(
+        "window.__snapcardI18nMessages = %s; window.__snapcardLocale = 'zh-CN';"
+        % json.dumps({"en": I18N_EN, "zh_CN": I18N_ZH_CN})
+    )
 
     page.goto(MOCK)
     page.wait_for_timeout(200)
@@ -866,6 +882,54 @@ with sync_playwright() as p:
     print("15c) export canvas size at scale=2:", export_size)
     if not export_size or export_size.get("width") != 1200:
         fails.append(f"expected export canvas width 1200 (600x2, unaffected by preview scale), got {export_size}")
+
+    # ---- 16) English locale: flip the mock's UI language to "en" (no reload
+    # needed — content.js/card.js call chrome.i18n.getUILanguage()/getMessage()
+    # fresh on every modal open, per the i18n mock comment in mock.html) and
+    # reopen the modal. Confirms _locales/en/messages.json actually drives the
+    # UI, not just that zh_CN still passes by default. ----
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          if (host) {
+            const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+            const btn = btns.find((b) => b.textContent.trim() === '关闭' || b.textContent.trim() === 'Close');
+            if (btn) btn.click();
+          }
+        }"""
+    )
+    page.wait_for_timeout(150)
+    page.evaluate("() => { window.__snapcardLocale = 'en'; }")
+    page.locator('article:not(#tweet-2col) .snapcard-btn').click()
+    page.wait_for_timeout(400)
+
+    en_style_labels = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const shadow = host.shadowRoot;
+          const btns = Array.from(shadow.querySelectorAll('button'));
+          return btns.map((b) => b.textContent.trim()).filter((t) => ['White', 'Dark', 'Wallpaper'].includes(t));
+        }"""
+    )
+    en_copy_label = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const shadow = host.shadowRoot;
+          const btns = Array.from(shadow.querySelectorAll('button'));
+          const btn = btns.find((b) => b.textContent.trim() === 'Copy image');
+          return btn ? btn.textContent.trim() : null;
+        }"""
+    )
+    print(f"16) en locale: style selector = {en_style_labels}, primary button = {en_copy_label!r}")
+    for expected in ("White", "Dark", "Wallpaper"):
+        if expected not in en_style_labels:
+            fails.append(f"en locale: style selector missing '{expected}' option, got {en_style_labels}")
+    if en_copy_label != "Copy image":
+        fails.append(f"en locale: expected primary button text 'Copy image', got {en_copy_label!r}")
+
+    # reset back to zh-CN so nothing downstream (if this test ever grows more
+    # steps after this one) silently runs against the wrong locale
+    page.evaluate("() => { window.__snapcardLocale = 'zh-CN'; }")
 
 if console_errors:
     print("\nconsole errors captured:")

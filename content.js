@@ -10,6 +10,89 @@
   const BTN_CLASS = "snapcard-btn";
 
   // ============================================================
+  // i18n
+  // ============================================================
+
+  // English fallback text for every message key used in this file — mirrors
+  // _locales/en/messages.json key-for-key. chrome.i18n.getMessage() already
+  // falls back to the manifest's default_locale ("en") on its own inside a
+  // real extension, so this table is really just a defensive net for the
+  // rare case the API is unavailable or a key is somehow missing; keep it in
+  // sync with _locales/en/messages.json when adding/renaming keys.
+  const I18N_FALLBACK = {
+    generateCardButton: "Generate card",
+    cardGeneratingText: "Generating card, this can take a few seconds…",
+    truncatedNotice:
+      "This tweet is truncated — open the full tweet first so the card includes everything, not just what's currently visible.",
+    styleWhite: "White",
+    styleDark: "Dark",
+    styleWallpaper: "Wallpaper",
+    wallpaperSuffix: "Wallpaper",
+    uploadBackgroundTitle: "Upload background",
+    processingText: "Processing…",
+    customBgLimitText: "Up to %s custom backgrounds — delete one before adding another",
+    uploadFailedText: "Upload failed",
+    deleteBgTitle: "Delete this background",
+    customBgLabel: "Custom background %s",
+    moreWallpapers: "More wallpapers ▸",
+    collapseWallpapers: "Collapse ◂",
+    hideStatsLabel: "Hide stats",
+    hideTimeLabel: "Hide date",
+    translateLabel: "Translate",
+    translatingText: "Translating…",
+    translateFailedText: "Couldn't reach the translation service",
+    copyImageButton: "Copy image",
+    copiedText: "Copied ✓",
+    copyFailedText: "Copy failed",
+    downloadPngButton: "Download PNG",
+    downloadGeneratingText: "Generating…",
+    renderFailedText: "Render failed",
+    closeButton: "Close",
+    scrollHintText: "Copy button is below ↓",
+  };
+
+  // Sequentially substitutes %s tokens in a fallback template — mirrors (in
+  // spirit, not byte-for-byte) how chrome.i18n.getMessage() fills in a
+  // message's $PLACEHOLDER$ tokens from a substitutions array.
+  function applyFallbackSubstitutions(template, substitutions) {
+    if (substitutions == null) return template;
+    const subs = Array.isArray(substitutions) ? substitutions : [substitutions];
+    let i = 0;
+    return template.replace(/%s/g, () => (i < subs.length ? String(subs[i++]) : "%s"));
+  }
+
+  // Every user-visible string in this file goes through t(key, substitutions)
+  // rather than being hardcoded — chrome.i18n.getMessage() resolves it
+  // against the browser's UI language (falling back to _locales/en, the
+  // manifest's default_locale, when a translation is missing); if the API
+  // itself is unavailable for some reason, I18N_FALLBACK above is used
+  // instead so the UI never renders a raw message key.
+  function t(key, substitutions) {
+    try {
+      const msg = chrome.i18n.getMessage(key, substitutions);
+      if (msg) return msg;
+    } catch (_) {
+      // chrome.i18n unavailable — fall through to the English fallback
+    }
+    return applyFallbackSubstitutions(I18N_FALLBACK[key] || key, substitutions);
+  }
+
+  function uiLanguageIsChinese() {
+    try {
+      return (chrome.i18n.getUILanguage() || "").toLowerCase().indexOf("zh") === 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // Which language the "翻译/Translate" button should translate *into* —
+  // Chinese UI keeps today's behavior (translate into zh-CN), English UI
+  // translates into English. Passed to background.js's translate message.
+  function translateTargetLang() {
+    return uiLanguageIsChinese() ? "zh-CN" : "en";
+  }
+
+  // ============================================================
   // Button injection
   // ============================================================
 
@@ -23,8 +106,8 @@
     btn.className = BTN_CLASS;
     btn.setAttribute("role", "button");
     btn.setAttribute("tabindex", "0");
-    btn.setAttribute("aria-label", "生成卡片");
-    btn.title = "生成卡片";
+    btn.setAttribute("aria-label", t("generateCardButton"));
+    btn.title = t("generateCardButton");
     Object.assign(btn.style, {
       display: "flex",
       alignItems: "center",
@@ -451,14 +534,18 @@
   // ---------- wallpaper background picker ----------
   // 7 built-in real photos (bundled in assets/), or "custom" (user-uploaded
   // photo, stored separately in chrome.storage.local as customBg).
+  // `name` is a proper noun (photo name) and stays untranslated in both
+  // locales; the "壁纸/Wallpaper" suffix shown to the user is appended at
+  // render time via t("wallpaperSuffix") — see renderBgThumbnails below —
+  // so it follows the UI language instead of being baked in here.
   const BUILTIN_BACKGROUNDS = [
-    { id: "sequoia", label: "Sequoia 壁纸", file: "assets/bg-sequoia.webp" },
-    { id: "sparrow", label: "Sparrow 壁纸", file: "assets/bg-sparrow.webp" },
-    { id: "silver", label: "Silver 壁纸", file: "assets/bg-silver.webp" },
-    { id: "rose-gold", label: "Rose Gold 壁纸", file: "assets/bg-rose-gold.webp" },
-    { id: "albany-gold", label: "Albany Gold 壁纸", file: "assets/bg-albany-gold.webp" },
-    { id: "space-gray", label: "Space Gray 壁纸", file: "assets/bg-space-gray.webp" },
-    { id: "gradient-dark", label: "Gradient Dark 壁纸", file: "assets/bg-gradient-dark.webp" },
+    { id: "sequoia", name: "Sequoia", file: "assets/bg-sequoia.webp" },
+    { id: "sparrow", name: "Sparrow", file: "assets/bg-sparrow.webp" },
+    { id: "silver", name: "Silver", file: "assets/bg-silver.webp" },
+    { id: "rose-gold", name: "Rose Gold", file: "assets/bg-rose-gold.webp" },
+    { id: "albany-gold", name: "Albany Gold", file: "assets/bg-albany-gold.webp" },
+    { id: "space-gray", name: "Space Gray", file: "assets/bg-space-gray.webp" },
+    { id: "gradient-dark", name: "Gradient Dark", file: "assets/bg-gradient-dark.webp" },
   ];
 
   function builtinBackgroundUrl(entry) {
@@ -564,11 +651,22 @@
 
   const CHINESE_RE = /[一-鿿]/g;
 
-  function isMostlyNonChinese(text) {
+  // "Primary language" heuristic: a body is treated as (primarily) Chinese
+  // once at least 10% of its non-whitespace characters are CJK — same 10%
+  // cutoff the old isMostlyNonChinese() used, just phrased as the positive
+  // case so it can be compared against the UI's own language below.
+  function isPrimarilyChinese(text) {
     const stripped = (text || "").replace(/\s/g, "");
     if (!stripped.length) return false;
     const zh = (stripped.match(CHINESE_RE) || []).length;
-    return zh / stripped.length < 0.1;
+    return zh / stripped.length >= 0.1;
+  }
+
+  // Show the Translate toggle whenever the tweet's primary language differs
+  // from the UI's language — Chinese UI + non-Chinese tweet (today's
+  // behavior, unchanged) or English UI + a tweet that's mostly Chinese.
+  function shouldShowTranslate(text) {
+    return uiLanguageIsChinese() ? !isPrimarilyChinese(text) : isPrimarilyChinese(text);
   }
 
   function buildFilename(handle) {
@@ -685,7 +783,7 @@
     });
     const loadingText = document.createElement("div");
     Object.assign(loadingText.style, { fontSize: "14px", color: "#536471" });
-    loadingText.textContent = "卡片生成中，需要等待几秒钟…";
+    loadingText.textContent = t("cardGeneratingText");
     loadingWrap.appendChild(spinner);
     loadingWrap.appendChild(loadingText);
     previewWrap.appendChild(loadingWrap);
@@ -725,7 +823,7 @@
         fontSize: "13px",
         lineHeight: "1.5",
       });
-      notice.textContent = "这条推文被折叠了，建议先点开推文全文再生成，当前只包含可见部分。";
+      notice.textContent = t("truncatedNotice");
       panel.insertBefore(notice, previewWrap); // previewWrap already exists from phase 1
     }
 
@@ -887,7 +985,7 @@
     rebuildCard();
 
     // ----- style selector -----
-    const STYLE_LABELS = { white: "白色", dark: "黑色", wallpaper: "壁纸" };
+    const STYLE_LABELS = { white: t("styleWhite"), dark: t("styleDark"), wallpaper: t("styleWallpaper") };
     const styleRow = document.createElement("div");
     Object.assign(styleRow.style, { display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" });
 
@@ -981,7 +1079,7 @@
       if (allowDelete) {
         const del = document.createElement("button");
         del.type = "button";
-        del.title = "删除这张背景";
+        del.title = t("deleteBgTitle");
         del.dataset.snapcardRole = "bg-delete";
         del.textContent = "×"; // ×
         Object.assign(del.style, {
@@ -1034,7 +1132,7 @@
 
     function buildUploadButton(bgStatus) {
       const uploadBtn = document.createElement("label");
-      uploadBtn.title = "上传背景";
+      uploadBtn.title = t("uploadBackgroundTitle");
       Object.assign(uploadBtn.style, {
         width: "28px",
         height: "28px",
@@ -1060,10 +1158,10 @@
         const file = fileInput.files && fileInput.files[0];
         if (!file) return;
         if (state.customBgs.length >= MAX_CUSTOM_BACKGROUNDS) {
-          bgStatus.textContent = "自定义背景最多 6 张，先删一张再传";
+          bgStatus.textContent = t("customBgLimitText", [String(MAX_CUSTOM_BACKGROUNDS)]);
           return;
         }
-        bgStatus.textContent = "处理中…";
+        bgStatus.textContent = t("processingText");
         try {
           const dataUrl = await resizeImageFileToDataUrl(file);
           const next = state.customBgs.concat([dataUrl]);
@@ -1073,7 +1171,7 @@
           saveBackgroundId(state.bgId);
           bgStatus.textContent = "";
         } catch (_) {
-          bgStatus.textContent = "上传失败";
+          bgStatus.textContent = t("uploadFailedText");
         }
         renderBgThumbnails();
         rebuildCard();
@@ -1085,8 +1183,17 @@
     function renderBgThumbnails() {
       bgControls.innerHTML = "";
 
-      const builtinItems = BUILTIN_BACKGROUNDS.map((b) => ({ id: b.id, label: b.label, url: builtinBackgroundUrl(b) }));
-      const customItems = state.customBgs.map((url, i) => ({ id: `custom:${i}`, label: `自定义背景 ${i + 1}`, url }));
+      const wallpaperSuffix = t("wallpaperSuffix");
+      const builtinItems = BUILTIN_BACKGROUNDS.map((b) => ({
+        id: b.id,
+        label: `${b.name} ${wallpaperSuffix}`,
+        url: builtinBackgroundUrl(b),
+      }));
+      const customItems = state.customBgs.map((url, i) => ({
+        id: `custom:${i}`,
+        label: t("customBgLabel", [String(i + 1)]),
+        url,
+      }));
       const allItems = builtinItems.concat(customItems);
       const selectedItem = allItems.find((it) => it.id === state.bgId) || allItems[0];
       const restItems = allItems.filter((it) => it !== selectedItem);
@@ -1134,7 +1241,7 @@
         flexShrink: "0",
       });
       function paintToggle() {
-        toggleBtn.textContent = bgExpanded ? "收起 ◂" : "更多壁纸 ▸";
+        toggleBtn.textContent = bgExpanded ? t("collapseWallpapers") : t("moreWallpapers");
       }
       paintToggle();
       toggleBtn.addEventListener("click", () => {
@@ -1197,7 +1304,7 @@
     hideStatsCheckbox.type = "checkbox";
     hideStatsCheckbox.checked = state.hideStats;
     const hideStatsText = document.createElement("span");
-    hideStatsText.textContent = "隐藏互动数据";
+    hideStatsText.textContent = t("hideStatsLabel");
     hideStatsLabel.appendChild(hideStatsCheckbox);
     hideStatsLabel.appendChild(hideStatsText);
     hideStatsCheckbox.addEventListener("change", () => {
@@ -1221,7 +1328,7 @@
     hideTimeCheckbox.type = "checkbox";
     hideTimeCheckbox.checked = state.hideTime;
     const hideTimeText = document.createElement("span");
-    hideTimeText.textContent = "隐藏时间";
+    hideTimeText.textContent = t("hideTimeLabel");
     hideTimeLabel.appendChild(hideTimeCheckbox);
     hideTimeLabel.appendChild(hideTimeText);
     hideTimeCheckbox.addEventListener("change", () => {
@@ -1234,13 +1341,13 @@
     const statusText = document.createElement("span");
     Object.assign(statusText.style, { fontSize: "12px", color: "#536471" });
 
-    if (isMostlyNonChinese(data.text)) {
+    if (shouldShowTranslate(data.text)) {
       const label = document.createElement("label");
       Object.assign(label.style, { display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: "#0f1419", cursor: "pointer" });
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       const labelText = document.createElement("span");
-      labelText.textContent = "翻译";
+      labelText.textContent = t("translateLabel");
       label.appendChild(checkbox);
       label.appendChild(labelText);
       leftControls.appendChild(label);
@@ -1248,18 +1355,22 @@
 
       checkbox.addEventListener("change", async () => {
         if (checkbox.checked) {
-          statusText.textContent = "翻译中…";
+          statusText.textContent = t("translatingText");
           try {
-            const res = await chrome.runtime.sendMessage({ type: "translate", text: data.text });
+            const res = await chrome.runtime.sendMessage({
+              type: "translate",
+              text: data.text,
+              target: translateTargetLang(),
+            });
             if (res && res.ok) {
               state.translatedText = res.text;
               statusText.textContent = "";
             } else {
-              statusText.textContent = "翻译服务连不上（国内需代理）";
+              statusText.textContent = t("translateFailedText");
               checkbox.checked = false;
             }
           } catch (_) {
-            statusText.textContent = "翻译服务连不上（国内需代理）";
+            statusText.textContent = t("translateFailedText");
             checkbox.checked = false;
           }
         } else {
@@ -1293,16 +1404,16 @@
     // Copy is the primary action (most users copy-and-paste straight into a
     // chat rather than saving a file), so it gets the primary button style
     // and goes first; Download is secondary.
-    const copyBtn = makeButton("复制图片", true);
+    const copyBtn = makeButton(t("copyImageButton"), true);
     copyBtn.addEventListener("click", async () => {
       const originalLabel = copyBtn.textContent;
       copyBtn.disabled = true;
       try {
         const { blob } = await window.SnapCard.renderCardToPng(state.exportEl, 2);
         await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-        copyBtn.textContent = "已复制 ✓";
+        copyBtn.textContent = t("copiedText");
       } catch (e) {
-        copyBtn.textContent = "复制失败";
+        copyBtn.textContent = t("copyFailedText");
       }
       setTimeout(() => {
         copyBtn.textContent = originalLabel;
@@ -1310,10 +1421,10 @@
       }, 1500);
     });
 
-    const downloadBtn = makeButton("下载 PNG", false);
+    const downloadBtn = makeButton(t("downloadPngButton"), false);
     downloadBtn.addEventListener("click", async () => {
       const originalLabel = downloadBtn.textContent;
-      downloadBtn.textContent = "生成中…";
+      downloadBtn.textContent = t("downloadGeneratingText");
       downloadBtn.disabled = true;
       try {
         const { dataUrl } = await window.SnapCard.renderCardToPng(state.exportEl, 2);
@@ -1322,7 +1433,7 @@
         a.download = buildFilename(data.handle);
         a.click();
       } catch (e) {
-        downloadBtn.textContent = "渲染失败";
+        downloadBtn.textContent = t("renderFailedText");
         setTimeout(() => (downloadBtn.textContent = originalLabel), 1500);
         downloadBtn.disabled = false;
         return;
@@ -1331,7 +1442,7 @@
       downloadBtn.disabled = false;
     });
 
-    const closeBtn = makeButton("关闭", false);
+    const closeBtn = makeButton(t("closeButton"), false);
     closeBtn.addEventListener("click", () => closeModal(host));
 
     rightControls.appendChild(copyBtn);
@@ -1355,7 +1466,7 @@
     // panel would scroll away with panel's content (its containing block is
     // panel's scrollable padding box), which defeats the purpose.
     const scrollHint = document.createElement("div");
-    scrollHint.textContent = "复制按钮在下面 ↓";
+    scrollHint.textContent = t("scrollHintText");
     Object.assign(scrollHint.style, {
       position: "fixed",
       background: "rgba(15, 20, 25, 0.85)",

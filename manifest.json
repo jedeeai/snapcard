@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
   "name": "SnapCard",
-  "description": "一键把 X 推文变成分享卡片 | Turn any post on X into a beautiful shareable card",
+  "default_locale": "en",
+  "description": "__MSG_extDescription__",
   "version": "0.8.19",
   "homepage_url": "https://xbangdan.com",
   "icons": {

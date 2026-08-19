@@ -1,0 +1,40 @@
+{
+  "extDescription": { "message": "Turn any post on X into a beautiful shareable card." },
+  "generateCardButton": { "message": "Generate card" },
+  "cardGeneratingText": { "message": "Generating card, this can take a few seconds…" },
+  "truncatedNotice": { "message": "This tweet is truncated — open the full tweet first so the card includes everything, not just what's currently visible." },
+  "styleWhite": { "message": "White" },
+  "styleDark": { "message": "Dark" },
+  "styleWallpaper": { "message": "Wallpaper" },
+  "wallpaperSuffix": { "message": "Wallpaper" },
+  "uploadBackgroundTitle": { "message": "Upload background" },
+  "processingText": { "message": "Processing…" },
+  "customBgLimitText": {
+    "message": "Up to $COUNT$ custom backgrounds — delete one before adding another",
+    "placeholders": { "count": { "content": "$1", "example": "6" } }
+  },
+  "uploadFailedText": { "message": "Upload failed" },
+  "deleteBgTitle": { "message": "Delete this background" },
+  "customBgLabel": {
+    "message": "Custom background $INDEX$",
+    "placeholders": { "index": { "content": "$1", "example": "1" } }
+  },
+  "moreWallpapers": { "message": "More wallpapers ▸" },
+  "collapseWallpapers": { "message": "Collapse ◂" },
+  "hideStatsLabel": { "message": "Hide stats" },
+  "hideTimeLabel": { "message": "Hide date" },
+  "translateLabel": { "message": "Translate" },
+  "translatingText": { "message": "Translating…" },
+  "translateFailedText": { "message": "Couldn't reach the translation service" },
+  "copyImageButton": { "message": "Copy image" },
+  "copiedText": { "message": "Copied ✓" },
+  "copyFailedText": { "message": "Copy failed" },
+  "downloadPngButton": { "message": "Download PNG" },
+  "downloadGeneratingText": { "message": "Generating…" },
+  "renderFailedText": { "message": "Render failed" },
+  "closeButton": { "message": "Close" },
+  "scrollHintText": { "message": "Copy button is below ↓" },
+  "watermarkLabel": { "message": "Show the SnapCard watermark on cards" },
+  "brandBarText": { "message": "Made by xbangdan.com" },
+  "brandLogoAlt": { "message": "xbangdan" }
+}

@@ -26,7 +26,46 @@
   window.__sentMessages = [];
   const __syncStore = {};
   const __localStore = {};
+
+  // ---- i18n mock ----
+  // window.__snapcardI18nMessages is injected by smoke.py (via
+  // page.add_init_script, before this script or content.js/card.js run) by
+  // reading the *real* _locales/en/messages.json and _locales/zh_CN/messages.json
+  // off disk — this mock never hand-copies message text, it just re-implements
+  // chrome.i18n.getMessage()'s placeholder substitution against whatever those
+  // real files contain, so a smoke-test pass actually proves the shipped
+  // message files produce the right on-screen text.
+  //
+  // window.__snapcardLocale starts at "zh-CN" (today's default UI language for
+  // this test) and can be flipped to "en" mid-test (see smoke.py's English
+  // scenario) to exercise the other locale — chrome.i18n.getUILanguage() and
+  // getMessage() both read it live, no page reload needed, matching how
+  // content.js/card.js call them fresh on every modal open/rebuild.
+  window.__snapcardLocale = window.__snapcardLocale || "zh-CN";
+  window.__snapcardI18nMessages = window.__snapcardI18nMessages || { en: {}, zh_CN: {} };
+
+  function __mockGetMessage(key, substitutions) {
+    const localeKey = (window.__snapcardLocale || "zh-CN").replace(/-/g, "_");
+    const table = window.__snapcardI18nMessages[localeKey] || window.__snapcardI18nMessages.en || {};
+    const entry = table[key];
+    if (!entry) return "";
+    const subs = substitutions == null ? [] : Array.isArray(substitutions) ? substitutions : [substitutions];
+    const placeholders = entry.placeholders || {};
+    return (entry.message || "").replace(/\$([A-Za-z0-9_]+)\$/g, (whole, name) => {
+      const ph = placeholders[name.toLowerCase()] || placeholders[name];
+      if (!ph) return whole;
+      const m = String(ph.content || "").match(/^\$(\d+)$/);
+      if (!m) return ph.content || "";
+      const idx = parseInt(m[1], 10) - 1;
+      return subs[idx] != null ? String(subs[idx]) : "";
+    });
+  }
+
   window.chrome = {
+    i18n: {
+      getUILanguage: () => window.__snapcardLocale || "zh-CN",
+      getMessage: (key, substitutions) => __mockGetMessage(key, substitutions),
+    },
     runtime: {
       id: "fake-extension-id",
       getURL: (path) => "../" + path,

@@ -53,14 +53,16 @@ function cacheSet(key, value) {
   }
 }
 
-async function translateLine(text) {
+async function translateLine(text, target) {
   if (!text || !text.trim()) return text; // keep blank lines as-is
-  const key = "zh-CN|" + text;
+  const key = target + "|" + text;
   const hit = cacheGet(key);
   if (hit != null) return hit;
 
   const url =
-    "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=" +
+    "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=" +
+    encodeURIComponent(target) +
+    "&dt=t&q=" +
     encodeURIComponent(text);
 
   const controller = new AbortController();
@@ -78,10 +80,15 @@ async function translateLine(text) {
 }
 
 // Translate line-by-line so paragraph breaks in the original tweet are kept.
-async function handleTranslate(text) {
+// `target` defaults to "zh-CN" for backward compatibility with any caller
+// that still sends the old two-field { type, text } message shape; content.js
+// now always sends target explicitly (zh-CN for a Chinese UI, en otherwise —
+// see translateTargetLang() there).
+async function handleTranslate(text, target) {
   try {
+    const tl = target || "zh-CN";
     const lines = String(text == null ? "" : text).split("\n");
-    const translatedLines = await Promise.all(lines.map(translateLine));
+    const translatedLines = await Promise.all(lines.map((line) => translateLine(line, tl)));
     return { ok: true, text: translatedLines.join("\n") };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
@@ -97,7 +104,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "translate") {
-    handleTranslate(msg.text).then(sendResponse);
+    handleTranslate(msg.text, msg.target).then(sendResponse);
     return true; // async response
   }
 
