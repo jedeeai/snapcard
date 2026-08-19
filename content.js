@@ -428,6 +428,26 @@
     }
   }
 
+  // Whether the date (next to the name/verified badge) is hidden. Same
+  // storage/memory pattern as hideStats.
+  function getHideTimeSetting() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.sync.get({ hideTime: false }, (res) => resolve(!!res.hideTime));
+      } catch (_) {
+        resolve(false);
+      }
+    });
+  }
+
+  function saveHideTime(value) {
+    try {
+      chrome.storage.sync.set({ hideTime: !!value });
+    } catch (_) {
+      // not fatal — just won't be remembered next time
+    }
+  }
+
   // ---------- wallpaper background picker ----------
   // 7 built-in real photos (bundled in assets/), or "custom" (user-uploaded
   // photo, stored separately in chrome.storage.local as customBg).
@@ -578,11 +598,12 @@
     if (!shell.host.isConnected) return; // closed before we got this far
 
     const data = extractTweetData(article);
-    const [watermark, style, customBgs, hideStats, savedBgId] = await Promise.all([
+    const [watermark, style, customBgs, hideStats, hideTime, savedBgId] = await Promise.all([
       getWatermarkSetting(),
       getSavedStyle(),
       getCustomBackgrounds(),
       getHideStatsSetting(),
+      getHideTimeSetting(),
       getSavedBackgroundId(),
     ]);
     if (!shell.host.isConnected) return; // closed while settings were loading
@@ -592,6 +613,7 @@
       style,
       customBgs,
       hideStats,
+      hideTime,
       bgId: sanitizeBgId(savedBgId, customBgs),
     });
   }
@@ -712,6 +734,7 @@
       style: VALID_STYLES.includes(options.style) ? options.style : "white",
       customBgs: options.customBgs || [],
       hideStats: !!options.hideStats,
+      hideTime: !!options.hideTime,
       bgId: options.bgId || "sequoia",
       exportEl: null, // the node render.js should actually export (card, or card+wallpaper frame)
     };
@@ -724,7 +747,7 @@
     function rebuildCard() {
       previewWrap.innerHTML = ""; // clears the loading spinner on the first call
       const cardData = Object.assign({}, data, { translatedText: state.translatedText });
-      const cardOptions = { watermark: options.watermark, hideStats: state.hideStats };
+      const cardOptions = { watermark: options.watermark, hideStats: state.hideStats, hideTime: state.hideTime };
       if (state.style === "wallpaper") {
         // Wallpaper is always the white card, framed on a background image.
         const card = window.SnapCard.buildCard(cardData, Object.assign({ theme: "white" }, cardOptions));
@@ -1065,6 +1088,30 @@
       rebuildCard();
     });
     leftControls.appendChild(hideStatsLabel);
+
+    // "隐藏时间" — same row/style/pattern as "隐藏互动数据", right after it.
+    const hideTimeLabel = document.createElement("label");
+    Object.assign(hideTimeLabel.style, {
+      display: "flex",
+      alignItems: "center",
+      gap: "6px",
+      fontSize: "13px",
+      color: "#0f1419",
+      cursor: "pointer",
+    });
+    const hideTimeCheckbox = document.createElement("input");
+    hideTimeCheckbox.type = "checkbox";
+    hideTimeCheckbox.checked = state.hideTime;
+    const hideTimeText = document.createElement("span");
+    hideTimeText.textContent = "隐藏时间";
+    hideTimeLabel.appendChild(hideTimeCheckbox);
+    hideTimeLabel.appendChild(hideTimeText);
+    hideTimeCheckbox.addEventListener("change", () => {
+      state.hideTime = hideTimeCheckbox.checked;
+      saveHideTime(state.hideTime);
+      rebuildCard();
+    });
+    leftControls.appendChild(hideTimeLabel);
 
     const statusText = document.createElement("span");
     Object.assign(statusText.style, { fontSize: "12px", color: "#536471" });

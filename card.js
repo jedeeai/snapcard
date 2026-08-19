@@ -365,19 +365,22 @@
       nameRow.appendChild(badge);
     }
     // Date moved up here (next to the name/badge) per spec — the footer now
-    // only carries the interaction stats.
-    const dateSpan = el(
-      "span",
-      {
-        marginLeft: "8px",
-        fontSize: "13px",
-        color: palette.subtle,
-        whiteSpace: "nowrap",
-      },
-      { textContent: formatTime(data.datetime) }
-    );
-    dateSpan.dataset.snapcardRole = "date";
-    nameRow.appendChild(dateSpan);
+    // only carries the interaction stats. options.hideTime skips creating
+    // this node entirely (not display:none), same pattern as hideStats.
+    if (!options.hideTime) {
+      const dateSpan = el(
+        "span",
+        {
+          marginLeft: "8px",
+          fontSize: "13px",
+          color: palette.subtle,
+          whiteSpace: "nowrap",
+        },
+        { textContent: formatTime(data.datetime) }
+      );
+      dateSpan.dataset.snapcardRole = "date";
+      nameRow.appendChild(dateSpan);
+    }
     const handleSpan = el(
       "span",
       { color: palette.subtle, fontSize: "14px" },

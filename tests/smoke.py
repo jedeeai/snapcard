@@ -452,6 +452,55 @@ with sync_playwright() as p:
     if footer_after_restore is not True:
         fails.append("stats footer did not come back after unchecking 隐藏互动数据")
 
+    # ---- 10b) "隐藏时间" checkbox removes the date next to the name/badge,
+    # unchecking restores it — same pattern as 隐藏互动数据 above. ----
+    def shadow_has_date():
+        return page.evaluate(
+            """() => {
+              const host = document.getElementById('snapcard-host');
+              return host.shadowRoot.textContent.includes('2026年8月19日');
+            }"""
+        )
+
+    date_before = shadow_has_date()
+    checked_hide_time = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const cb = Array.from(host.shadowRoot.querySelectorAll('input[type=checkbox]')).find(
+            (c) => c.nextSibling && c.nextSibling.textContent === '隐藏时间'
+          );
+          if (!cb) return false;
+          cb.click();
+          return true;
+        }"""
+    )
+    page.wait_for_timeout(150)
+    date_after_hide = shadow_has_date()
+    # uncheck again to confirm it restores
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const cb = Array.from(host.shadowRoot.querySelectorAll('input[type=checkbox]')).find(
+            (c) => c.nextSibling && c.nextSibling.textContent === '隐藏时间'
+          );
+          cb.click();
+        }"""
+    )
+    page.wait_for_timeout(150)
+    date_after_restore = shadow_has_date()
+    print(
+        f"10b) hideTime: found_checkbox={checked_hide_time}, date before={date_before}, "
+        f"after check={date_after_hide}, after uncheck={date_after_restore}"
+    )
+    if not checked_hide_time:
+        fails.append("could not find/click the '隐藏时间' checkbox")
+    if date_before is not True:
+        fails.append("expected '2026年8月19日' to be present before checking 隐藏时间")
+    if date_after_hide is not False:
+        fails.append("'2026年8月19日' still present after checking 隐藏时间")
+    if date_after_restore is not True:
+        fails.append("'2026年8月19日' did not come back after unchecking 隐藏时间")
+
     # ---- 11) background thumbnail row (Wallpaper mode only) is collapsed by
     # default: only the currently-selected thumbnail + the "更多壁纸" toggle
     # are round elements in the DOM (everything else isn't rendered at all
