@@ -12,7 +12,16 @@
      which the smoke test explicitly does not need to succeed), getURL
      resolves to the *real* assets/ folder (mock.html lives in tests/, so
      '../' + path reaches the actual assets/bg-sequoia.webp) — this exercises
-     the real wallpaper file end to end instead of a synthetic stand-in. -->
+     the real wallpaper file end to end instead of a synthetic stand-in.
+
+     storage.*.get callbacks fire via a small setTimeout rather than
+     synchronously: headless Chromium resolves requestAnimationFrame almost
+     instantly (no real vsync to wait on), so with a synchronous mock the
+     whole "open modal -> extract -> read settings -> build card" chain used
+     to finish before a test's very next CDP round-trip even landed, making
+     the loading-spinner state unobservable/racy. A little realistic latency
+     (real chrome.storage calls aren't synchronous either) gives the smoke
+     test a deterministic window to see the spinner before it's replaced. -->
 <script>
   window.__sentMessages = [];
   const __syncStore = {};
@@ -29,14 +38,14 @@
     },
     storage: {
       sync: {
-        get: (defaults, cb) => cb(Object.assign({}, defaults, __syncStore)),
+        get: (defaults, cb) => setTimeout(() => cb(Object.assign({}, defaults, __syncStore)), 30),
         set: (items, cb) => {
           Object.assign(__syncStore, items);
           if (cb) cb();
         },
       },
       local: {
-        get: (defaults, cb) => cb(Object.assign({}, defaults, __localStore)),
+        get: (defaults, cb) => setTimeout(() => cb(Object.assign({}, defaults, __localStore)), 30),
         set: (items, cb) => {
           Object.assign(__localStore, items);
           if (cb) cb();

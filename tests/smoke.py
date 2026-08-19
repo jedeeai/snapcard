@@ -35,9 +35,37 @@ with sync_playwright() as p:
     if btn_count != 1:
         fails.append(f"expected exactly 1 .snapcard-btn in article, got {btn_count}")
 
-    # ---- 2) click opens modal, shadow DOM contains card with name text ----
+    # ---- 2) click opens modal; a loading spinner shows immediately (before
+    # extraction/settings-read finishes), then the card replaces it. Checked
+    # with zero wait right after .click() — Playwright's click() only returns
+    # once the browser has dispatched and processed the event, i.e. after the
+    # click handler's synchronous portion (through its first await) has run,
+    # so the spinner must already be in the DOM at this point if the "open
+    # modal immediately, build the card asynchronously" behavior is real. ----
     page.locator("article .snapcard-btn").click()
-    page.wait_for_timeout(200)
+    spinner_immediately = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          if (!host || !host.shadowRoot) return null;
+          const wrap = host.shadowRoot.querySelector('[data-snapcard-role="loading-wrap"]');
+          return wrap ? wrap.textContent : null;
+        }"""
+    )
+    print("2) loading spinner present immediately after click:", spinner_immediately)
+    if not spinner_immediately or "卡片生成中" not in spinner_immediately:
+        fails.append(f"expected loading spinner text containing '卡片生成中' immediately after click, got {spinner_immediately!r}")
+
+    page.wait_for_timeout(300)
+
+    spinner_after = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          return host && host.shadowRoot ? !!host.shadowRoot.querySelector('[data-snapcard-role="loading-wrap"]') : false;
+        }"""
+    )
+    print("   loading spinner gone after render:", not spinner_after)
+    if spinner_after:
+        fails.append("loading spinner still present after the card should have finished rendering")
 
     shadow_text = page.evaluate(
         """() => {
@@ -422,7 +450,36 @@ with sync_playwright() as p:
     if footer_after_restore is not True:
         fails.append("stats footer did not come back after unchecking 隐藏互动数据")
 
-    # ---- 11) background thumbnail row (Wallpaper mode only): 7 built-ins + upload button = 8 ----
+    # ---- 11) background thumbnail row (Wallpaper mode only) is collapsed by
+    # default: only the currently-selected thumbnail + the "更多壁纸" toggle
+    # are round elements in the DOM (everything else isn't rendered at all
+    # until expanded, not just CSS-hidden — that's what makes this count
+    # check meaningful rather than racing against a clip). Clicking "更多壁纸"
+    # must reveal >= 8 (7 built-ins + upload button); clicking "收起" must
+    # collapse back down (after the close animation's grace period). ----
+    def get_thumb_count():
+        return page.evaluate(
+            """() => {
+              const host = document.getElementById('snapcard-host');
+              const items = Array.from(host.shadowRoot.querySelectorAll('button, label')).filter(
+                (el) => el.style.borderRadius === '50%'
+              );
+              return items.length;
+            }"""
+        )
+
+    def click_bg_toggle():
+        return page.evaluate(
+            """() => {
+              const host = document.getElementById('snapcard-host');
+              const btn = host.shadowRoot.querySelector('[data-snapcard-role="bg-toggle"]');
+              if (!btn) return null;
+              const label = btn.textContent.trim();
+              btn.click();
+              return label;
+            }"""
+        )
+
     page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
@@ -431,23 +488,35 @@ with sync_playwright() as p:
         }"""
     )
     page.wait_for_timeout(300)
-    thumb_count = page.evaluate(
-        """() => {
-          const host = document.getElementById('snapcard-host');
-          const items = Array.from(host.shadowRoot.querySelectorAll('button, label')).filter(
-            (el) => el.style.borderRadius === '50%'
-          );
-          return items.length;
-        }"""
-    )
-    print("11) background thumbnail + upload button count:", thumb_count)
-    if thumb_count < 8:
-        fails.append(f"expected >= 8 round items (7 built-in backgrounds + upload button), got {thumb_count}")
+    collapsed_count = get_thumb_count()
+    print("11) background thumbnails, collapsed (default) count:", collapsed_count)
+    if collapsed_count != 1:
+        fails.append(f"expected exactly 1 round thumbnail (only the selected one) while collapsed, got {collapsed_count}")
+
+    toggle_label_before = click_bg_toggle()
+    page.wait_for_timeout(100)  # children are appended synchronously on click, no need to wait for the animation
+    expanded_count = get_thumb_count()
+    print(f"    clicked toggle ({toggle_label_before!r}), expanded count: {expanded_count}")
+    if toggle_label_before != "更多壁纸 ▸":
+        fails.append(f"expected collapsed toggle button to read '更多壁纸 ▸', got {toggle_label_before!r}")
+    if expanded_count < 8:
+        fails.append(f"expected >= 8 round items (7 built-in backgrounds + upload button) once expanded, got {expanded_count}")
+
+    toggle_label_after = click_bg_toggle()
+    page.wait_for_timeout(350)  # collapse defers removing the children until the close transition would finish
+    recollapsed_count = get_thumb_count()
+    print(f"    clicked toggle again ({toggle_label_after!r}), re-collapsed count: {recollapsed_count}")
+    if toggle_label_after != "收起 ◂":
+        fails.append(f"expected expanded toggle button to read '收起 ◂', got {toggle_label_after!r}")
+    if recollapsed_count != 1:
+        fails.append(f"expected background row to collapse back to 1 round thumbnail, got {recollapsed_count}")
 
     # ---- 12) switching to bg-gradient-dark actually loads that real file
     # (naturalWidth 700 is that image's true pixel width on disk — asserting
     # the exact number, not just >0, proves the *right* file loaded, not just
     # *some* image) ----
+    click_bg_toggle()  # expand again so the gradient-dark thumbnail exists
+    page.wait_for_timeout(100)
     clicked_gradient_dark = page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
@@ -472,6 +541,107 @@ with sync_playwright() as p:
         fails.append("could not find/click the 'Gradient Dark 壁纸' thumbnail")
     elif not gradient_dark_info or gradient_dark_info.get("naturalWidth") != 700:
         fails.append(f"expected bg-gradient-dark.webp to load at naturalWidth 700, got {gradient_dark_info}")
+
+    # ---- 13) custom backgrounds are deletable: inject a fake custom
+    # background directly into the storage mock, reopen the modal, select it,
+    # confirm it (and only it, not the 7 built-ins) shows a delete badge,
+    # delete it, confirm it disappears from the row and — since it was the
+    # selected background — the selection falls back to Sequoia. ----
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+          const btn = btns.find((b) => b.textContent.trim() === '关闭');
+          if (btn) btn.click();
+        }"""
+    )
+    page.wait_for_timeout(150)
+    FAKE_CUSTOM_BG = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7"
+    page.evaluate(
+        """(url) => new Promise((resolve) => chrome.storage.local.set({ customBgs: [url] }, resolve))""",
+        FAKE_CUSTOM_BG,
+    )
+    page.locator("article .snapcard-btn").click()
+    page.wait_for_timeout(400)
+    # this modal remembers style=黑色 from step 9 — switch to 壁纸 and expand
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+          btns.find((b) => b.textContent.trim() === '壁纸').click();
+        }"""
+    )
+    page.wait_for_timeout(200)
+    click_bg_toggle()
+    page.wait_for_timeout(100)
+
+    custom_thumb_check = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const shadow = host.shadowRoot;
+          const thumb = Array.from(shadow.querySelectorAll('button')).find((b) => b.title === '自定义背景 1');
+          if (!thumb) return { found: false };
+          const wrap = thumb.parentElement;
+          const del = wrap.querySelector('[data-snapcard-role="bg-delete"]');
+          // built-ins must NOT have a delete badge
+          const sequoiaThumb = Array.from(shadow.querySelectorAll('button')).find((b) => b.title === 'Sequoia 壁纸');
+          const sequoiaDel = sequoiaThumb ? sequoiaThumb.parentElement.querySelector('[data-snapcard-role="bg-delete"]') : 'missing-thumb';
+          thumb.click(); // select the custom background
+          return { found: true, hasDeleteBadge: !!del, builtinHasDeleteBadge: !!sequoiaDel };
+        }"""
+    )
+    page.wait_for_timeout(150)
+    print("13) custom background thumbnail check:", custom_thumb_check)
+    if not custom_thumb_check.get("found"):
+        fails.append("injected custom background thumbnail ('自定义背景 1') not found in expanded row")
+    else:
+        if not custom_thumb_check.get("hasDeleteBadge"):
+            fails.append("custom background thumbnail is missing its delete badge")
+        if custom_thumb_check.get("builtinHasDeleteBadge"):
+            fails.append("a built-in background (Sequoia) unexpectedly has a delete badge")
+
+    bg_selected_before_delete = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const wallpaperBg = host.shadowRoot.querySelector('[data-snapcard-role="wallpaper-bg"]');
+          return wallpaperBg ? wallpaperBg.src : null;
+        }"""
+    )
+    deleted = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const shadow = host.shadowRoot;
+          const thumb = Array.from(shadow.querySelectorAll('button')).find((b) => b.title === '自定义背景 1');
+          if (!thumb) return false;
+          const del = thumb.parentElement.querySelector('[data-snapcard-role="bg-delete"]');
+          if (!del) return false;
+          del.click();
+          return true;
+        }"""
+    )
+    page.wait_for_timeout(200)
+    after_delete = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const shadow = host.shadowRoot;
+          const stillThere = !!Array.from(shadow.querySelectorAll('button')).find((b) => b.title === '自定义背景 1');
+          const wallpaperBg = shadow.querySelector('[data-snapcard-role="wallpaper-bg"]');
+          return { stillThere, bgSrc: wallpaperBg ? wallpaperBg.src : null };
+        }"""
+    )
+    print(
+        f"    selected before delete: {bg_selected_before_delete[:40] if bg_selected_before_delete else None!r}..., "
+        f"deleted={deleted}, after: stillThere={after_delete['stillThere']}, "
+        f"bgSrc={after_delete['bgSrc'][-30:] if after_delete['bgSrc'] else None!r}"
+    )
+    if bg_selected_before_delete != FAKE_CUSTOM_BG:
+        fails.append(f"expected the custom background to be selected (wallpaper-bg src) before deleting, got {bg_selected_before_delete!r}")
+    if not deleted:
+        fails.append("could not find/click the delete badge on the custom background thumbnail")
+    elif after_delete["stillThere"]:
+        fails.append("custom background thumbnail still present after clicking its delete badge")
+    elif not after_delete["bgSrc"] or "bg-sequoia" not in after_delete["bgSrc"]:
+        fails.append(f"expected selection to fall back to Sequoia after deleting the selected custom background, got {after_delete['bgSrc']!r}")
 
 if console_errors:
     print("\nconsole errors captured:")

@@ -351,21 +351,39 @@
     }
   }
 
-  // User-uploaded wallpaper background (data URL), if any.
-  function getCustomBackground() {
+  const MAX_CUSTOM_BACKGROUNDS = 6;
+
+  // User-uploaded wallpaper backgrounds (data URLs), up to MAX_CUSTOM_BACKGROUNDS.
+  // One-time migration: the old single-image key `customBg` (pre-multi-image)
+  // becomes the first element of the new `customBgs` array, and the old key
+  // is removed so this only ever runs once.
+  function getCustomBackgrounds() {
     return new Promise((resolve) => {
       try {
-        chrome.storage.local.get({ customBg: null }, (res) => resolve(res.customBg || null));
+        chrome.storage.local.get({ customBgs: null, customBg: null }, (res) => {
+          if (Array.isArray(res.customBgs)) {
+            resolve(res.customBgs);
+            return;
+          }
+          if (res.customBg) {
+            const migrated = [res.customBg];
+            chrome.storage.local.set({ customBgs: migrated }, () => {
+              chrome.storage.local.remove("customBg", () => resolve(migrated));
+            });
+            return;
+          }
+          resolve([]);
+        });
       } catch (_) {
-        resolve(null);
+        resolve([]);
       }
     });
   }
 
-  function setCustomBackground(dataUrl) {
+  function setCustomBackgrounds(list) {
     return new Promise((resolve) => {
       try {
-        chrome.storage.local.set({ customBg: dataUrl }, () => resolve());
+        chrome.storage.local.set({ customBgs: list }, () => resolve());
       } catch (_) {
         resolve();
       }
@@ -437,16 +455,33 @@
     }
   }
 
-  // Resolves a background id + the current custom upload (if any) to an
-  // actual image URL usable as an <img src>. Every branch already returns
-  // either a data: URL (a custom upload, already inlined) or a
-  // chrome-extension:// URL served from web_accessible_resources (every
-  // built-in) — never a bare path.
-  function resolveBackgroundUrl(bgId, customBg) {
-    if (bgId === "custom") return customBg || defaultWallpaperUrl();
+  // A custom upload's id is "custom:<index into customBgs>" — indices are
+  // never stored per-image, they're just each image's current array
+  // position, recomputed on every render. That means a deletion earlier in
+  // the array naturally "renumbers" everything after it for free; the only
+  // thing that can go stale is a *previously selected* id pointing past the
+  // end of a shrunk array, which this treats as "fall back to Sequoia".
+  function resolveBackgroundUrl(bgId, customBgs) {
+    if (typeof bgId === "string" && bgId.indexOf("custom:") === 0) {
+      const idx = parseInt(bgId.slice(7), 10);
+      if (Array.isArray(customBgs) && idx >= 0 && idx < customBgs.length) return customBgs[idx];
+      return defaultWallpaperUrl(); // stale/out-of-range index — the image was deleted
+    }
     const entry = BUILTIN_BACKGROUNDS.find((b) => b.id === bgId);
     if (entry) return builtinBackgroundUrl(entry);
     return defaultWallpaperUrl(); // unrecognized id — safe fallback to Sequoia
+  }
+
+  // Validates a persisted bgId against the actual customBgs array length —
+  // used once when a modal opens, so a stale "custom:N" from a since-deleted
+  // image falls back to Sequoia instead of silently resolving to whatever
+  // image now happens to occupy that slot (or nothing, if the array shrank).
+  function sanitizeBgId(bgId, customBgs) {
+    if (typeof bgId === "string" && bgId.indexOf("custom:") === 0) {
+      const idx = parseInt(bgId.slice(7), 10);
+      if (!(Array.isArray(customBgs) && idx >= 0 && idx < customBgs.length)) return "sequoia";
+    }
+    return bgId || "sequoia";
   }
 
   // Downscale an uploaded image file to a data URL, longest side capped at
@@ -514,22 +549,51 @@
   }
 
   async function handleGenerateClick(article) {
+    // Open the modal shell (with a loading spinner) immediately, synchronously,
+    // so the click feels instant — extracting a real tweet's DOM and building
+    // the first card can take a perceptible moment on tweets with lots of
+    // media, and previously that work all happened *before* the modal ever
+    // appeared, which read as "did my click even register?".
+    const shell = createModalShell();
+    await nextPaint(); // let the spinner actually paint before the heavy synchronous work below runs
+    if (!shell.host.isConnected) return; // closed before we got this far
+
     const data = extractTweetData(article);
-    const [watermark, style, customBg, hideStats, bgId] = await Promise.all([
+    const [watermark, style, customBgs, hideStats, savedBgId] = await Promise.all([
       getWatermarkSetting(),
       getSavedStyle(),
-      getCustomBackground(),
+      getCustomBackgrounds(),
       getHideStatsSetting(),
       getSavedBackgroundId(),
     ]);
-    openPreviewModal(data, { watermark, style, customBg, hideStats, bgId });
+    if (!shell.host.isConnected) return; // closed while settings were loading
+
+    finishModal(shell, data, {
+      watermark,
+      style,
+      customBgs,
+      hideStats,
+      bgId: sanitizeBgId(savedBgId, customBgs),
+    });
   }
 
-  function openPreviewModal(data, options) {
+  function nextPaint() {
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }
+
+  // Phase 1: the modal shell — host/shadow/overlay/panel/previewWrap, shown
+  // immediately with a loading spinner in place of the (not yet built) card.
+  // Close-on-overlay-click and Esc-to-close are wired up here, not in
+  // finishModal, so the user can cancel out even while still loading.
+  function createModalShell() {
     const host = document.createElement("div");
     host.id = "snapcard-host";
     document.body.appendChild(host);
     const shadow = host.attachShadow({ mode: "open" });
+
+    const styleEl = document.createElement("style");
+    styleEl.textContent = "@keyframes snapcard-spin { to { transform: rotate(360deg); } }";
+    shadow.appendChild(styleEl);
 
     const overlay = document.createElement("div");
     Object.assign(overlay.style, {
@@ -556,6 +620,59 @@
       boxSizing: "border-box",
     });
 
+    const previewWrap = document.createElement("div");
+    Object.assign(previewWrap.style, { display: "flex", justifyContent: "center", marginBottom: "16px" });
+
+    const loadingWrap = document.createElement("div");
+    Object.assign(loadingWrap.style, {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "12px",
+      padding: "80px 40px",
+    });
+    loadingWrap.dataset.snapcardRole = "loading-wrap";
+    const spinner = document.createElement("div");
+    Object.assign(spinner.style, {
+      width: "28px",
+      height: "28px",
+      borderRadius: "50%",
+      border: "3px solid #eff3f4",
+      borderTopColor: "#8b98a5", // gray only — colorblind rule: no red/green
+      animation: "snapcard-spin 0.8s linear infinite",
+    });
+    const loadingText = document.createElement("div");
+    Object.assign(loadingText.style, { fontSize: "14px", color: "#536471" });
+    loadingText.textContent = "卡片生成中，需要等待几秒钟…";
+    loadingWrap.appendChild(spinner);
+    loadingWrap.appendChild(loadingText);
+    previewWrap.appendChild(loadingWrap);
+
+    panel.appendChild(previewWrap);
+    overlay.appendChild(panel);
+    shadow.appendChild(overlay);
+
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) closeModal(host);
+    });
+    const escHandler = (e) => {
+      if (e.key === "Escape") closeModal(host);
+    };
+    host.__snapcardEsc = escHandler;
+    document.addEventListener("keydown", escHandler, true);
+
+    return { host, shadow, overlay, panel, previewWrap };
+  }
+
+  // Phase 2: tweet data + saved settings are ready — replace the spinner with
+  // the real card and build the rest of the modal (truncated notice, style
+  // selector, background picker, controls, scroll hint). This is everything
+  // the old single-phase modal builder used to do before the modal was ever
+  // shown; now it all runs after an already-visible modal instead.
+  function finishModal(shell, data, options) {
+    const { host, shadow, panel, previewWrap } = shell;
+
     if (data.truncated) {
       const notice = document.createElement("div");
       Object.assign(notice.style, {
@@ -568,17 +685,13 @@
         lineHeight: "1.5",
       });
       notice.textContent = "这条推文被折叠了，建议先点开推文全文再生成，当前只包含可见部分。";
-      panel.appendChild(notice);
+      panel.insertBefore(notice, previewWrap); // previewWrap already exists from phase 1
     }
-
-    const previewWrap = document.createElement("div");
-    Object.assign(previewWrap.style, { display: "flex", justifyContent: "center", marginBottom: "16px" });
-    panel.appendChild(previewWrap);
 
     const state = {
       translatedText: null,
       style: VALID_STYLES.includes(options.style) ? options.style : "white",
-      customBg: options.customBg || null,
+      customBgs: options.customBgs || [],
       hideStats: !!options.hideStats,
       bgId: options.bgId || "sequoia",
       exportEl: null, // the node render.js should actually export (card, or card+wallpaper frame)
@@ -590,14 +703,14 @@
     let updateScrollHint = () => {};
 
     function rebuildCard() {
-      previewWrap.innerHTML = "";
+      previewWrap.innerHTML = ""; // clears the loading spinner on the first call
       const cardData = Object.assign({}, data, { translatedText: state.translatedText });
       const cardOptions = { watermark: options.watermark, hideStats: state.hideStats };
       if (state.style === "wallpaper") {
         // Wallpaper is always the white card, framed on a background image.
         const card = window.SnapCard.buildCard(cardData, Object.assign({ theme: "white" }, cardOptions));
         previewWrap.appendChild(card); // mount first — buildWallpaperFrame needs a laid-out node to measure
-        const bgUrl = resolveBackgroundUrl(state.bgId, state.customBg);
+        const bgUrl = resolveBackgroundUrl(state.bgId, state.customBgs);
         const frame = window.SnapCard.buildWallpaperFrame(card, bgUrl);
         previewWrap.innerHTML = "";
         previewWrap.appendChild(frame);
@@ -633,7 +746,7 @@
     }
 
     const bgControls = document.createElement("div");
-    Object.assign(bgControls.style, { display: "flex", alignItems: "center", gap: "10px" });
+    Object.assign(bgControls.style, { display: "flex", alignItems: "center", gap: "8px" });
     function updateBgControlsVisibility() {
       bgControls.style.display = state.style === "wallpaper" ? "flex" : "none";
     }
@@ -664,46 +777,102 @@
     paintStyleButtons();
     styleRow.appendChild(styleBtnRow);
 
-    // Background picker — only shown in Wallpaper mode. A row of small round
-    // thumbnails (built-in photo, 4 built-in gradients, the custom upload if
-    // one exists) plus a small "+" upload button. Rebuilt from scratch on
-    // every selection/upload rather than patched in place — it's cheap and
-    // keeps the "which thumbnail is selected" logic in one place.
-    function renderBgThumbnails() {
-      bgControls.innerHTML = "";
+    // ----- background picker (Wallpaper mode only) -----
+    // Two states, never remembered across modal opens (always starts
+    // collapsed): collapsed shows just the current selection + a "更多壁纸"
+    // toggle; expanded reveals every built-in + custom background, the
+    // upload button, and a "收起" toggle. The reveal animates via max-width
+    // on a wrapper (250ms): expanding populates the wrapper's children
+    // *before* growing it (so there's something to animate open), collapsing
+    // shrinks it first and only clears the children once the transition
+    // would have finished, so both directions animate rather than snapping.
+    let bgExpanded = false;
 
-      const items = BUILTIN_BACKGROUNDS.map((b) => ({ id: b.id, label: b.label, url: builtinBackgroundUrl(b) }));
-      if (state.customBg) items.push({ id: "custom", label: "自定义背景", url: state.customBg });
+    function buildBgThumb(item, allowDelete) {
+      const wrap = document.createElement("div");
+      Object.assign(wrap.style, { position: "relative", flexShrink: "0" });
 
-      items.forEach((item) => {
-        const thumb = document.createElement("button");
-        thumb.type = "button";
-        thumb.title = item.label;
-        const selected = state.bgId === item.id;
-        Object.assign(thumb.style, {
-          width: "28px",
-          height: "28px",
+      const thumb = document.createElement("button");
+      thumb.type = "button";
+      thumb.title = item.label;
+      const selected = state.bgId === item.id;
+      Object.assign(thumb.style, {
+        width: "28px",
+        height: "28px",
+        borderRadius: "50%",
+        display: "block",
+        backgroundImage: `url("${item.url}")`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        border: selected ? "2px solid #1d9bf0" : "2px solid transparent",
+        boxShadow: selected ? "none" : "0 0 0 1px #eff3f4",
+        padding: "0",
+        cursor: "pointer",
+      });
+      thumb.addEventListener("click", () => {
+        if (state.bgId === item.id) return;
+        state.bgId = item.id;
+        saveBackgroundId(item.id);
+        renderBgThumbnails();
+        rebuildCard();
+      });
+      wrap.appendChild(thumb);
+
+      if (allowDelete) {
+        const del = document.createElement("button");
+        del.type = "button";
+        del.title = "删除这张背景";
+        del.dataset.snapcardRole = "bg-delete";
+        del.textContent = "×"; // ×
+        Object.assign(del.style, {
+          position: "absolute",
+          top: "-4px",
+          right: "-4px",
+          width: "16px",
+          height: "16px",
           borderRadius: "50%",
-          flexShrink: "0",
-          backgroundImage: `url("${item.url}")`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          border: selected ? "2px solid #1d9bf0" : "2px solid transparent",
-          boxShadow: selected ? "none" : "0 0 0 1px #eff3f4",
+          border: "1px solid #ffffff",
+          background: "#57606a", // dark gray circle — colorblind rule: no red
+          color: "#ffffff",
+          fontSize: "11px",
+          lineHeight: "14px",
+          textAlign: "center",
           padding: "0",
           cursor: "pointer",
         });
-        thumb.addEventListener("click", () => {
-          if (state.bgId === item.id) return;
-          state.bgId = item.id;
-          saveBackgroundId(item.id);
+        del.addEventListener("mouseenter", () => (del.style.background = "#3d444d"));
+        del.addEventListener("mouseleave", () => (del.style.background = "#57606a"));
+        del.addEventListener("click", async (e) => {
+          e.stopPropagation(); // don't also trigger the thumb's own click (select)
+          const idx = parseInt(item.id.slice(7), 10);
+          const wasSelected = state.bgId === item.id;
+          const next = state.customBgs.slice();
+          next.splice(idx, 1);
+          state.customBgs = next;
+          await setCustomBackgrounds(next);
+          if (wasSelected) {
+            state.bgId = "sequoia";
+            saveBackgroundId("sequoia");
+          } else if (typeof state.bgId === "string" && state.bgId.indexOf("custom:") === 0) {
+            // ids are array positions, not stable per-image — deleting an
+            // earlier custom image shifts every later one down by one, so a
+            // still-selected later image needs its id shifted to match.
+            const selIdx = parseInt(state.bgId.slice(7), 10);
+            if (selIdx > idx) {
+              state.bgId = `custom:${selIdx - 1}`;
+              saveBackgroundId(state.bgId);
+            }
+          }
           renderBgThumbnails();
           rebuildCard();
         });
-        bgControls.appendChild(thumb);
-      });
+        wrap.appendChild(del);
+      }
 
-      // Small upload button, styled like the round thumbnails.
+      return wrap;
+    }
+
+    function buildUploadButton(bgStatus) {
       const uploadBtn = document.createElement("label");
       uploadBtn.title = "上传背景";
       Object.assign(uploadBtn.style, {
@@ -727,19 +896,21 @@
       fileInput.style.display = "none";
       uploadBtn.appendChild(fileInput);
 
-      const bgStatus = document.createElement("span");
-      Object.assign(bgStatus.style, { fontSize: "12px", color: "#536471" });
-
       fileInput.addEventListener("change", async () => {
         const file = fileInput.files && fileInput.files[0];
         if (!file) return;
+        if (state.customBgs.length >= MAX_CUSTOM_BACKGROUNDS) {
+          bgStatus.textContent = "自定义背景最多 6 张，先删一张再传";
+          return;
+        }
         bgStatus.textContent = "处理中…";
         try {
           const dataUrl = await resizeImageFileToDataUrl(file);
-          await setCustomBackground(dataUrl);
-          state.customBg = dataUrl;
-          state.bgId = "custom";
-          saveBackgroundId("custom");
+          const next = state.customBgs.concat([dataUrl]);
+          await setCustomBackgrounds(next);
+          state.customBgs = next;
+          state.bgId = `custom:${next.length - 1}`;
+          saveBackgroundId(state.bgId);
           bgStatus.textContent = "";
         } catch (_) {
           bgStatus.textContent = "上传失败";
@@ -748,7 +919,88 @@
         rebuildCard();
       });
 
-      bgControls.appendChild(uploadBtn);
+      return uploadBtn;
+    }
+
+    function renderBgThumbnails() {
+      bgControls.innerHTML = "";
+
+      const builtinItems = BUILTIN_BACKGROUNDS.map((b) => ({ id: b.id, label: b.label, url: builtinBackgroundUrl(b) }));
+      const customItems = state.customBgs.map((url, i) => ({ id: `custom:${i}`, label: `自定义背景 ${i + 1}`, url }));
+      const allItems = builtinItems.concat(customItems);
+      const selectedItem = allItems.find((it) => it.id === state.bgId) || allItems[0];
+      const restItems = allItems.filter((it) => it !== selectedItem);
+
+      // The always-visible slot only gets a delete badge while expanded — a
+      // selected *custom* image must still be deletable (it doesn't stop
+      // being a custom image just because it's currently picked), but the
+      // collapsed view (just this one thumbnail + the toggle) stays clean.
+      bgControls.appendChild(buildBgThumb(selectedItem, bgExpanded && selectedItem.id.indexOf("custom:") === 0));
+
+      const collapsibleGroup = document.createElement("div");
+      Object.assign(collapsibleGroup.style, {
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        overflow: "hidden",
+        maxWidth: "0px",
+        transition: "max-width 250ms ease",
+      });
+      bgControls.appendChild(collapsibleGroup);
+
+      const bgStatus = document.createElement("span");
+      Object.assign(bgStatus.style, { fontSize: "12px", color: "#536471" });
+
+      function populateGroup() {
+        collapsibleGroup.innerHTML = "";
+        restItems.forEach((item) => {
+          collapsibleGroup.appendChild(buildBgThumb(item, item.id.indexOf("custom:") === 0));
+        });
+        collapsibleGroup.appendChild(buildUploadButton(bgStatus));
+      }
+
+      const toggleBtn = document.createElement("button");
+      toggleBtn.type = "button";
+      toggleBtn.dataset.snapcardRole = "bg-toggle";
+      Object.assign(toggleBtn.style, {
+        border: "none",
+        background: "transparent",
+        color: "#1d9bf0",
+        fontSize: "12px",
+        fontWeight: "600",
+        cursor: "pointer",
+        padding: "0",
+        whiteSpace: "nowrap",
+        flexShrink: "0",
+      });
+      function paintToggle() {
+        toggleBtn.textContent = bgExpanded ? "收起 ◂" : "更多壁纸 ▸";
+      }
+      paintToggle();
+      toggleBtn.addEventListener("click", () => {
+        bgExpanded = !bgExpanded;
+        paintToggle();
+        if (bgExpanded) {
+          populateGroup();
+          void collapsibleGroup.offsetWidth; // force layout so the 0->N transition actually animates
+          collapsibleGroup.style.maxWidth = "600px";
+        } else {
+          collapsibleGroup.style.maxWidth = "0px";
+          setTimeout(() => {
+            if (!bgExpanded) collapsibleGroup.innerHTML = "";
+          }, 300);
+        }
+      });
+
+      if (bgExpanded) {
+        // Re-rendering while already expanded (selection/upload/delete) —
+        // show the full group immediately, no replay of the open animation.
+        populateGroup();
+        collapsibleGroup.style.transition = "none";
+        collapsibleGroup.style.maxWidth = "600px";
+      }
+
+      bgControls.appendChild(toggleBtn);
       bgControls.appendChild(bgStatus);
     }
     renderBgThumbnails();
@@ -953,19 +1205,9 @@
     host.__snapcardResize = updateScrollHint;
     window.addEventListener("resize", updateScrollHint);
 
-    overlay.appendChild(panel);
-    shadow.appendChild(overlay);
+    // overlay/panel were already appended to shadow back in createModalShell
+    // (phase 1) — only the scroll hint itself is new here.
     shadow.appendChild(scrollHint);
     updateScrollHint(); // panel is laid out now — set the correct initial state
-
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) closeModal(host);
-    });
-
-    const escHandler = (e) => {
-      if (e.key === "Escape") closeModal(host);
-    };
-    host.__snapcardEsc = escHandler;
-    document.addEventListener("keydown", escHandler, true);
   }
 })();
