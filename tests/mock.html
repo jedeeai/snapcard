@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>SnapCard mock</title>
+</head>
+<body>
+
+<!-- Mock chrome extension API: storage.sync/local are real in-memory stores
+     (so the theme/customBg round-trip is actually exercised), sendMessage
+     always resolves { ok:false } (simulates translation being unreachable,
+     which the smoke test explicitly does not need to succeed), getURL
+     returns a self-contained data: URI (1x1 gif) so the wallpaper background
+     never triggers a real network request in this offline test. -->
+<script>
+  window.__sentMessages = [];
+  const __syncStore = {};
+  const __localStore = {};
+  window.chrome = {
+    runtime: {
+      id: "fake-extension-id",
+      getURL: () => "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7",
+      sendMessage: (msg) => {
+        window.__sentMessages.push(msg);
+        return Promise.resolve({ ok: false, error: "mock: no network in smoke test" });
+      },
+      onMessage: { addListener: () => {} },
+    },
+    storage: {
+      sync: {
+        get: (defaults, cb) => cb(Object.assign({}, defaults, __syncStore)),
+        set: (items, cb) => {
+          Object.assign(__syncStore, items);
+          if (cb) cb();
+        },
+      },
+      local: {
+        get: (defaults, cb) => cb(Object.assign({}, defaults, __localStore)),
+        set: (items, cb) => {
+          Object.assign(__localStore, items);
+          if (cb) cb();
+        },
+        remove: (key, cb) => {
+          delete __localStore[key];
+          if (cb) cb();
+        },
+      },
+    },
+  };
+</script>
+
+<!-- One tweet, structured like real x.com DOM as of 2026-08:
+     - User-Name with an emoji <img alt> spliced into the display name and a blue-check svg
+     - tweetText with an emoji <img alt> in the body
+     - role=group aria-label carrying the four interaction stats
+     - one tweetPhoto image (1x1 transparent data URI, avoids any network fetch)
+     - a time[datetime] element -->
+<article data-testid="tweet">
+  <div data-testid="User-Name">
+    <div>
+      <div dir="ltr">
+        <a href="/jack" role="link">
+          <span>Jack<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7" alt="🚀" draggable="false"></span>
+        </a>
+      </div>
+      <span><svg aria-label="Verified account" width="18" height="18" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg></span>
+    </div>
+    <div>
+      <div dir="ltr"><span>@jack</span></div>
+    </div>
+  </div>
+
+  <div data-testid="tweetText">
+    <span>Shipping SnapCard today</span>
+    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7" alt="🎉" draggable="false">
+    <span> — turn any post into a card.</span>
+  </div>
+
+  <div data-testid="tweetPhoto">
+    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7">
+  </div>
+
+  <time datetime="2026-08-19T01:41:00.000Z">9:41 AM</time>
+
+  <div role="group" aria-label="446 replies, 1210 reposts, 8408 likes, 2680000 views">
+    <div role="button" data-testid="reply">446</div>
+    <div role="button" data-testid="retweet">1.2K</div>
+    <div role="button" data-testid="like">8.4K</div>
+    <div role="button" data-testid="analytics">2.6M</div>
+  </div>
+</article>
+
+<script src="../card.js"></script>
+<script src="../render.js"></script>
+<script src="../content.js"></script>
+
+</body>
+</html>

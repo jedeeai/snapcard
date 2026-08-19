@@ -1,0 +1,116 @@
+# SnapCard
+
+Turn any post on X (Twitter) into a beautiful, shareable card — right from your timeline.
+
+![screenshot](docs/screenshot.png)
+
+## Features
+
+- Adds a small camera icon to every tweet's action bar (next to reply/repost/like)
+- One click generates a clean card with the avatar, name, handle, text, images and stats
+- Three card styles — White, Dark, and Wallpaper (the card centered on a background
+  photo with a soft drop shadow) — remembered as your default for next time
+- Wallpaper mode ships with a built-in background, or upload your own photo
+- Optional one-click translation into Chinese (via Google Translate) for a bilingual card
+- Download as PNG, or copy the rendered image straight to your clipboard
+- Everything is read directly from the page DOM — no login, no API keys, no tracking
+- Zero third-party dependencies, no build step
+
+## Install
+
+1. Download or clone this repository.
+2. Open `chrome://extensions` in Chrome.
+3. Turn on "Developer mode" (top right).
+4. Click "Load unpacked" and select this project's folder.
+5. Open x.com or twitter.com — a camera icon will appear on tweets' action bars.
+
+## Usage
+
+1. Click the camera icon on any tweet.
+2. A preview modal opens with the generated card.
+3. Pick a style — White, Dark, or Wallpaper. In Wallpaper mode you can upload
+   your own background image, or reset back to the built-in one.
+4. If the tweet is mostly non-Chinese, a "Translate" toggle appears — turning it
+   on adds a Chinese translation below the original text.
+5. Click "Download PNG" to save the card, or "Copy image" to copy it to your
+   clipboard.
+
+Tweets that are truncated ("Show more") are only partially captured — the
+modal will tell you to open the full tweet first.
+
+## Privacy
+
+SnapCard only reads the DOM of the page you're already looking at. It does
+not collect, store, or transmit any of your data.
+
+- Card generation happens entirely locally in your browser.
+- Images are loaded directly from `pbs.twimg.com` / `video.twimg.com`, or, if
+  that fails, proxied through the extension's own background worker (still
+  never leaving your machine except to fetch the image itself).
+- If you turn on translation, the tweet text is sent to Google's public
+  translation endpoint (`translate.googleapis.com`) to get a translation.
+  Nothing else is sent, and this only happens when you explicitly click
+  "Translate".
+- No analytics, no accounts, no third-party servers.
+- A custom Wallpaper-mode background you upload is resized and stored locally
+  (`chrome.storage.local`) on your own machine — it is never uploaded anywhere.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+The bundled wallpaper is an Apple macOS wallpaper included for personal use;
+replace `assets/bg-sequoia.webp` to ship your own.
+
+---
+
+# SnapCard（中文）
+
+一键把 X（推特）上的任意一条推文变成好看的分享卡片。
+
+![screenshot](docs/screenshot.png)
+
+## 功能
+
+- 在每条推文的互动栏（回复/转发/点赞旁边）加一个小相机图标
+- 点一下生成卡片：头像、昵称、@handle、正文、配图、互动数据
+- 三种卡片样式：White（白底）、Dark（暗色）、Wallpaper（卡片居中放在背景图上，带柔和阴影），选择会被记住
+- Wallpaper 模式自带一张默认背景图，也支持上传自己的图片
+- 可选一键翻译成中文（谷歌翻译），生成原文+译文的双语卡片
+- 支持下载 PNG，或直接复制图片到剪贴板
+- 数据全部从页面 DOM 读取，不需要登录、不需要 API Key、不做任何追踪
+- 零第三方依赖，无需构建
+
+## 安装
+
+1. 下载或克隆本仓库。
+2. 打开 Chrome 的 `chrome://extensions`。
+3. 打开右上角「开发者模式」。
+4. 点「加载已解压的扩展程序」，选择本项目文件夹。
+5. 打开 x.com 或 twitter.com，推文互动栏就会出现相机图标。
+
+## 使用方法
+
+1. 点推文上的相机图标。
+2. 弹出预览窗口，能看到生成的卡片。
+3. 选一个样式：White / Dark / Wallpaper。Wallpaper 模式下可以上传自己的背景图，或点 Reset 恢复默认背景。
+4. 如果推文正文以非中文为主，会出现「Translate」开关，打开后正文下方会加一段中文译文。
+5. 点「Download PNG」保存卡片，或点「Copy image」把图片复制到剪贴板。
+
+被折叠（「显示更多」）的推文只能抓到可见部分，弹窗会提示先点开推文全文再生成。
+
+## 隐私
+
+SnapCard 只读取当前页面的 DOM，不收集、不存储、不上传任何数据。
+
+- 卡片生成完全在你的浏览器本地完成。
+- 图片直接从 `pbs.twimg.com` / `video.twimg.com` 加载；如果直接加载失败，会走插件自己的后台脚本代理下载（依然只是去拿图片本身，不涉及第三方服务器）。
+- 如果你打开了翻译功能，推文正文会发送给谷歌的公开翻译接口（`translate.googleapis.com`）获取译文；只有你主动点「翻译」才会发生这件事，不会发送其他任何内容。
+- 没有数据统计、没有账号系统、没有第三方服务器。
+- Wallpaper 模式如果你上传了自定义背景图，会压缩后存在本地（`chrome.storage.local`），只留在你自己电脑上，不会上传到任何地方。
+
+## License
+
+MIT，见 [LICENSE](LICENSE)。
+
+内置的默认壁纸是苹果 macOS 官方壁纸，仅供个人使用；如需分发请替换 `assets/bg-sequoia.webp` 为你自己的图片。
