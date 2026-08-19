@@ -91,6 +91,28 @@
       footer a:hover {
         text-decoration: underline;
       }
+      /* Brand bar: SnapCard is an xbangdan.com project. This lives only in
+         the extension's own UI (popup) — generated cards themselves stay
+         unbranded except for the optional "SnapCard" watermark. */
+      .brand-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid #eff3f4;
+        color: #536471;
+        font-size: 12px;
+        text-decoration: none;
+      }
+      .brand-bar img {
+        height: 20px;
+        width: auto;
+        flex-shrink: 0;
+      }
+      .brand-bar:hover {
+        color: #1d9bf0;
+      }
     </style>
   </head>
   <body>
@@ -106,6 +128,11 @@
     </div>
 
     <footer><a href="https://github.com/" target="_blank" rel="noopener">GitHub</a></footer>
+
+    <a class="brand-bar" href="https://xbangdan.com" target="_blank" rel="noopener">
+      <img src="assets/xbangdan-logo.svg" alt="X榜单" />
+      <span>X榜单 xbangdan.com 出品</span>
+    </a>
 
     <script src="popup.js"></script>
   </body>

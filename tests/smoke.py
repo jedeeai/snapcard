@@ -79,6 +79,40 @@ with sync_playwright() as p:
     if line_count != 1:
         fails.append(f"expected mock tweet body to render as 1 line, got {line_count} (text: {body_text!r})")
 
+    # ---- 2c) date is Chinese-formatted and lives next to the name/badge, not
+    # in the footer. The expected "YYYY年M月D日" prefix is computed by asking
+    # the browser to parse the mock's own datetime attribute (rather than
+    # hardcoding a date string in Python), so this doesn't depend on the test
+    # machine's timezone rolling the calendar day over. ----
+    expected_date_prefix = page.evaluate(
+        """() => {
+          const d = new Date('2026-08-19T01:41:00.000Z');
+          return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+        }"""
+    )
+    date_span_text = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const el = host.shadowRoot.querySelector('[data-snapcard-role="date"]');
+          return el ? el.textContent : null;
+        }"""
+    )
+    footer_text = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const el = host.shadowRoot.querySelector('[data-snapcard-role="footer"]');
+          return el ? el.textContent : null;
+        }"""
+    )
+    print(f"2c) date span: {date_span_text!r} (expected prefix {expected_date_prefix!r}), footer: {footer_text!r}")
+    if not date_span_text or expected_date_prefix not in date_span_text:
+        fails.append(f"expected date '{expected_date_prefix}' next to the name/badge, got {date_span_text!r}")
+    english_months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    if footer_text is None:
+        fails.append("footer (data-snapcard-role=footer) not found")
+    elif any(m in footer_text for m in english_months):
+        fails.append(f"footer still contains an English month abbreviation: {footer_text!r}")
+
     # ---- 3) click 下载 PNG, expect no JS error ----
     clicked = page.evaluate(
         """() => {

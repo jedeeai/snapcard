@@ -55,16 +55,14 @@
 
   // ---------- formatting ----------
 
-  // "9:41 · Aug 19, 2026"
+  // "2026年8月19日 10:37" — Chinese date format, 24-hour clock.
   function formatTime(iso) {
     if (!iso) return "";
     const d = new Date(iso);
     if (isNaN(d.getTime())) return "";
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const h24 = d.getHours();
-    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
-    return `${h12}:${mm} · ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hh}:${mm}`;
   }
 
   // Large-number abbreviation: 1210 -> "1.21K", 2680000 -> "2.68M". Numbers
@@ -298,21 +296,40 @@
     header.appendChild(avatar);
 
     const nameCol = el("div", { display: "flex", flexDirection: "column", minWidth: "0" });
-    const nameRow = el("div", { display: "flex", alignItems: "center", gap: "4px" });
+    // flexWrap so a long display name pushes the date down to its own line
+    // instead of overflowing the card — the date is the least essential item
+    // in this row, so it's the one that's allowed to drop.
+    const nameRow = el("div", { display: "flex", alignItems: "center", flexWrap: "wrap", rowGap: "2px" });
     const nameSpan = el(
       "span",
       {
         fontWeight: "700",
         fontSize: "16px",
         color: palette.text,
-        whiteSpace: "nowrap",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
+        wordBreak: "break-word",
       },
       { textContent: data.displayName || "" }
     );
     nameRow.appendChild(nameSpan);
-    if (data.verified) nameRow.appendChild(svgEl(verifiedBadgeSvg(palette.accent)));
+    if (data.verified) {
+      const badge = svgEl(verifiedBadgeSvg(palette.accent));
+      badge.style.marginLeft = "4px";
+      nameRow.appendChild(badge);
+    }
+    // Date moved up here (next to the name/badge) per spec — the footer now
+    // only carries the interaction stats.
+    const dateSpan = el(
+      "span",
+      {
+        marginLeft: "8px",
+        fontSize: "13px",
+        color: palette.subtle,
+        whiteSpace: "nowrap",
+      },
+      { textContent: formatTime(data.datetime) }
+    );
+    dateSpan.dataset.snapcardRole = "date";
+    nameRow.appendChild(dateSpan);
     const handleSpan = el(
       "span",
       { color: palette.subtle, fontSize: "14px" },
@@ -356,21 +373,16 @@
     const media = buildMediaGrid(data.images, !!data.hasVideo);
     if (media) card.appendChild(media);
 
-    // ----- footer -----
+    // ----- footer ----- (date now lives up in the header row; footer is stats-only)
     const footer = el("div", {
       marginTop: "16px",
       paddingTop: "12px",
       borderTop: `1px solid ${palette.hairline}`,
     });
-    const timeRow = el(
-      "div",
-      { fontSize: "13px", color: palette.subtle },
-      { textContent: formatTime(data.datetime) }
-    );
-    footer.appendChild(timeRow);
+    footer.dataset.snapcardRole = "footer";
 
     const stats = data.stats || {};
-    const statsRow = el("div", { display: "flex", alignItems: "center", gap: "16px", marginTop: "6px" });
+    const statsRow = el("div", { display: "flex", alignItems: "center", gap: "16px" });
     statsRow.appendChild(statSpan("comment", stats.replies, palette));
     statsRow.appendChild(statSpan("repost", stats.reposts, palette));
     statsRow.appendChild(statSpan("heart", stats.likes, palette));

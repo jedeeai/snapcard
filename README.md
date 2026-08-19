@@ -1,5 +1,7 @@
 # SnapCard（中文）
 
+由 [X榜单](https://xbangdan.com) 出品 · 追踪 X 中文圈优质账号的公开榜单
+
 一键把 X（推特）上的任意一条推文变成好看的分享卡片。
 
 ![screenshot](docs/screenshot.png)
@@ -53,6 +55,9 @@ MIT，见 [LICENSE](LICENSE)。
 ---
 
 # SnapCard
+
+Built by [X榜单 (xbangdan.com)](https://xbangdan.com) · a public leaderboard tracking
+quality accounts in the Chinese-language X community.
 
 Turn any post on X (Twitter) into a beautiful, shareable card — right from your timeline.
 
