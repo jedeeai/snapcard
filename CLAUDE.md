@@ -43,6 +43,10 @@
 - 折叠检测：`[data-testid="tweet-text-show-more-link"]`
 - React 拦截：注入按钮的 click 必须 window capture 阶段监听，只 stopPropagation 不 preventDefault（x-post-launcher 踩过）
 
+## 发版规范
+
+版本号用杰哥自定的「年序.月.日」格式（2026 为第 0 年）：2026-08-19 发布＝`0.8.19`，2027-02-01＝`1.2.1`。日期不补前导零（manifest 禁止），同天多版加第四段（`0.8.19.2`）。
+
 ## 复用来源（只抄不引用）
 
 - x-profile-md-saver：互动数据解析 parseCount（万/亿/K/M/B）
