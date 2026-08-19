@@ -145,12 +145,20 @@
     return badge;
   }
 
-  // Used for the 2/3/4-image grid layouts, where every cell has a *definite*
-  // size (aspect-ratio on the grid wrap resolves each 1fr row/column to real
-  // pixels), so the <img> can always fill it at 100%/100% and let
-  // object-fit:cover crop it — cropping to a fixed grid is the point there.
-  function buildGridTile(src, tileStyle, withPlayBadge) {
-    const holder = el("div", { position: "relative", overflow: "hidden", ...tileStyle });
+  // Used for the 2/3/4-image grid layouts. Every cell gets an explicit
+  // aspect-ratio (never a parent-driven height:100%) so its size is fully
+  // self-determined from the grid column's width — this is what lets
+  // buildMediaGrid's height-cap safety net (below) scale every cell by a
+  // single uniform factor and just rebuild, rather than juggling two
+  // different sizing strategies.
+  function buildGridTile(src, ratio, extraStyle, withPlayBadge) {
+    const holder = el("div", {
+      position: "relative",
+      overflow: "hidden",
+      width: "100%",
+      aspectRatio: String(ratio),
+      ...extraStyle,
+    });
     const img = el("img", {
       width: "100%",
       height: "100%",
@@ -189,29 +197,34 @@
     return holder;
   }
 
-  function buildMediaGrid(images, hasVideo) {
-    if (!images || !images.length) return null;
-    const list = images.slice(0, 4);
-    const n = list.length;
-
-    if (n === 1) {
-      const wrap = el("div", { marginTop: "16px" });
-      wrap.appendChild(buildSingleImageTile(list[0], hasVideo));
-      return wrap;
+  // Every cell always gets a concrete numeric ratio (never a bare
+  // parent-driven fallback) — this keeps the height-cap safety net below
+  // simple: it can scale *any* resolved ratio uniformly regardless of which
+  // branch produced it. Defaults approximate the pre-this-feature look for
+  // images X didn't give us a captured display ratio for.
+  function resolveCellRatios(list, n) {
+    if (n === 2) {
+      // X shows both images at the same height in a 2-up row — mirroring
+      // that means both cells share one ratio rather than each keeping its
+      // own (which would make two different-height cells despite being in
+      // the same visual row).
+      const shared = list[0].aspectRatio || 1;
+      return [shared, shared];
     }
+    if (n === 3) {
+      return [list[0].aspectRatio || 8 / 9, list[1].aspectRatio || 16 / 9, list[2].aspectRatio || 16 / 9];
+    }
+    // n === 4
+    return list.map((item) => item.aspectRatio || 1);
+  }
 
+  function layoutMediaGrid(urls, ratios, hasVideo) {
+    const n = urls.length;
     const wrap = el("div", { marginTop: "16px", borderRadius: "16px", overflow: "hidden" });
 
     if (n === 2) {
-      Object.assign(wrap.style, {
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        gap: "4px",
-        aspectRatio: "16/9",
-      });
-      list.forEach((src, i) =>
-        wrap.appendChild(buildGridTile(src, { width: "100%", height: "100%" }, hasVideo && i === 0))
-      );
+      Object.assign(wrap.style, { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px" });
+      urls.forEach((src, i) => wrap.appendChild(buildGridTile(src, ratios[i], {}, hasVideo && i === 0)));
       return wrap;
     }
 
@@ -221,13 +234,10 @@
         gridTemplateColumns: "1fr 1fr",
         gridTemplateRows: "1fr 1fr",
         gap: "4px",
-        aspectRatio: "16/9",
       });
-      wrap.appendChild(
-        buildGridTile(list[0], { width: "100%", height: "100%", gridRow: "1 / span 2" }, hasVideo)
-      );
-      wrap.appendChild(buildGridTile(list[1], { width: "100%", height: "100%" }));
-      wrap.appendChild(buildGridTile(list[2], { width: "100%", height: "100%" }));
+      wrap.appendChild(buildGridTile(urls[0], ratios[0], { gridRow: "1 / span 2" }, hasVideo));
+      wrap.appendChild(buildGridTile(urls[1], ratios[1], {}, false));
+      wrap.appendChild(buildGridTile(urls[2], ratios[2], {}, false));
       return wrap;
     }
 
@@ -237,11 +247,49 @@
       gridTemplateColumns: "1fr 1fr",
       gridTemplateRows: "1fr 1fr",
       gap: "4px",
-      aspectRatio: "1/1",
     });
-    list.forEach((src, i) =>
-      wrap.appendChild(buildGridTile(src, { width: "100%", height: "100%" }, hasVideo && i === 0))
-    );
+    urls.forEach((src, i) => wrap.appendChild(buildGridTile(src, ratios[i], {}, hasVideo && i === 0)));
+    return wrap;
+  }
+
+  const MEDIA_MAX_HEIGHT = 900; // logical px cap on the whole media area, pre-export-scale
+  const CARD_CONTENT_WIDTH = 536; // 600px card width minus 32px padding each side — fixed, every media grid renders at this width
+
+  function buildMediaGrid(images, hasVideo) {
+    if (!images || !images.length) return null;
+    const list = images.slice(0, 4);
+    const n = list.length;
+
+    if (n === 1) {
+      const wrap = el("div", { marginTop: "16px" });
+      wrap.appendChild(buildSingleImageTile(list[0].url, hasVideo));
+      return wrap;
+    }
+
+    const urls = list.map((item) => item.url);
+    let ratios = resolveCellRatios(list, n);
+    let wrap = layoutMediaGrid(urls, ratios, hasVideo);
+
+    // Safety net: mirroring X's real display ratio means a grid of very tall
+    // (e.g. 9:16) screenshots can end up taller than is reasonable for a
+    // card. Measure the grid's natural height at the card's fixed content
+    // width (mounted in a throwaway wrapper — never mutate `wrap`'s own
+    // style directly for offscreen positioning, see the render.js
+    // "position:fixed got serialized into the export" bug in the fault log)
+    // and if it exceeds the cap, scale every cell's ratio up uniformly
+    // (taller width:height ratio = shorter cell) until it fits, then rebuild.
+    const probe = el("div", { position: "fixed", left: "-9999px", top: "0", width: `${CARD_CONTENT_WIDTH}px` });
+    probe.appendChild(wrap);
+    document.body.appendChild(probe);
+    const naturalHeight = wrap.getBoundingClientRect().height;
+    document.body.removeChild(probe);
+
+    if (naturalHeight > MEDIA_MAX_HEIGHT && naturalHeight > 0) {
+      const factor = naturalHeight / MEDIA_MAX_HEIGHT;
+      ratios = ratios.map((r) => r * factor);
+      wrap = layoutMediaGrid(urls, ratios, hasVideo);
+    }
+
     return wrap;
   }
 

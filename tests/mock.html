@@ -100,6 +100,47 @@
   </div>
 </article>
 
+<!-- Second tweet, dedicated to the "media grid mirrors X's own display ratio"
+     regression: two tweetPhoto containers explicitly sized 254x460 (a tall
+     9:16-ish portrait screenshot ratio, ~0.552), like X's own timeline layout
+     gives a pair of portrait screenshots. extractImages() reads this via
+     getBoundingClientRect() on the *live* article, so the container's real
+     inline size (not the 1x1 image's natural size) is what must come through
+     as each photo's aspectRatio. id="tweet-2col" lets the test target this
+     article's own "生成卡片" button specifically. -->
+<article data-testid="tweet" id="tweet-2col">
+  <div data-testid="User-Name">
+    <div>
+      <div dir="ltr">
+        <a href="/jack" role="link"><span>Jack</span></a>
+      </div>
+    </div>
+    <div>
+      <div dir="ltr"><span>@jack</span></div>
+    </div>
+  </div>
+
+  <div data-testid="tweetText">
+    <span>Two tall screenshots, side by side.</span>
+  </div>
+
+  <div data-testid="tweetPhoto" style="width:254px;height:460px;display:block;">
+    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7" style="width:100%;height:100%;">
+  </div>
+  <div data-testid="tweetPhoto" style="width:254px;height:460px;display:block;">
+    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7" style="width:100%;height:100%;">
+  </div>
+
+  <time datetime="2026-08-19T01:41:00.000Z">9:41 AM</time>
+
+  <div role="group" aria-label="10 replies, 5 reposts, 40 likes, 900 views">
+    <div role="button" data-testid="reply">10</div>
+    <div role="button" data-testid="retweet">5</div>
+    <div role="button" data-testid="like">40</div>
+    <div role="button" data-testid="analytics">900</div>
+  </div>
+</article>
+
 <script src="../card.js"></script>
 <script src="../render.js"></script>
 <script src="../content.js"></script>

@@ -271,10 +271,27 @@
     return normalizeExtractedText(textWithEmoji(textEl));
   }
 
-  function extractImages(root) {
-    return Array.from(root.querySelectorAll('[data-testid="tweetPhoto"] img[src]')).map((img) =>
-      toLargeImage(img.getAttribute("src"))
-    );
+  // Reads each photo's *displayed* aspect ratio straight off the live
+  // timeline (getBoundingClientRect on the tweetPhoto container, not the
+  // <img>'s natural size) so the card's grid can mirror however X itself is
+  // actually cropping/showing it — a tall 9:16 screenshot shown near-full-
+  // height in a 2-up row on x.com should look the same way in the card, not
+  // get force-cropped by a generic fixed ratio.
+  //
+  // Must run on the *live* `article` (not a detached clone) — getBoundingClientRect
+  // on an unattached node returns an all-zero rect. Nested quote-tweet photos
+  // are excluded by checking each <img>'s closest <article> is this one, not
+  // an inner one.
+  function extractImages(article) {
+    const results = [];
+    article.querySelectorAll('[data-testid="tweetPhoto"] img[src]').forEach((img) => {
+      if (img.closest("article") !== article) return; // inside a nested quote tweet — skip
+      const container = img.closest('[data-testid="tweetPhoto"]') || img;
+      const rect = container.getBoundingClientRect();
+      const aspectRatio = rect.width > 0 && rect.height > 0 ? rect.width / rect.height : null;
+      results.push({ url: toLargeImage(img.getAttribute("src")), aspectRatio });
+    });
+    return results;
   }
 
   function extractVideo(root) {
@@ -292,9 +309,11 @@
 
     const { displayName, handle, verified } = extractNameAndHandle(root);
     const text = extractText(root);
-    let images = extractImages(root).slice(0, 4);
+    // extractImages needs the *live* article (not the detached clone) for
+    // getBoundingClientRect() to return real numbers — see its own comment.
+    let images = extractImages(article).slice(0, 4);
     const video = extractVideo(root);
-    if (video.hasVideo && video.poster && !images.length) images = [video.poster];
+    if (video.hasVideo && video.poster && !images.length) images = [{ url: video.poster, aspectRatio: null }];
 
     const timeEl = root.querySelector("time[datetime]");
     const datetime = timeEl ? timeEl.getAttribute("datetime") : null;

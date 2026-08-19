@@ -29,11 +29,12 @@ with sync_playwright() as p:
     page.goto(MOCK)
     page.wait_for_timeout(200)
 
-    # ---- 1) button injected ----
+    # ---- 1) button injected (mock.html has 2 articles — the main mock
+    # tweet, and #tweet-2col used only by the media-aspect-ratio test) ----
     btn_count = page.locator("article .snapcard-btn").count()
-    print("1) buttons injected in article:", btn_count)
-    if btn_count != 1:
-        fails.append(f"expected exactly 1 .snapcard-btn in article, got {btn_count}")
+    print("1) buttons injected across articles:", btn_count)
+    if btn_count != 2:
+        fails.append(f"expected exactly 2 .snapcard-btn (one per mock article), got {btn_count}")
 
     # ---- 2) click opens modal; a loading spinner shows immediately (before
     # extraction/settings-read finishes), then the card replaces it. Checked
@@ -41,8 +42,9 @@ with sync_playwright() as p:
     # once the browser has dispatched and processed the event, i.e. after the
     # click handler's synchronous portion (through its first await) has run,
     # so the spinner must already be in the DOM at this point if the "open
-    # modal immediately, build the card asynchronously" behavior is real. ----
-    page.locator("article .snapcard-btn").click()
+    # modal immediately, build the card asynchronously" behavior is real.
+    # (Scoped to the main mock tweet, not #tweet-2col.) ----
+    page.locator('article:not(#tweet-2col) .snapcard-btn').click()
     spinner_immediately = page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
@@ -370,7 +372,7 @@ with sync_playwright() as p:
     )
     page.wait_for_timeout(150)
     still_open = page.evaluate("() => !!document.getElementById('snapcard-host')")
-    page.locator("article .snapcard-btn").click()
+    page.locator('article:not(#tweet-2col) .snapcard-btn').click()
     page.wait_for_timeout(200)
     reopened = page.evaluate(
         """() => {
@@ -561,7 +563,7 @@ with sync_playwright() as p:
         """(url) => new Promise((resolve) => chrome.storage.local.set({ customBgs: [url] }, resolve))""",
         FAKE_CUSTOM_BG,
     )
-    page.locator("article .snapcard-btn").click()
+    page.locator('article:not(#tweet-2col) .snapcard-btn').click()
     page.wait_for_timeout(400)
     # this modal remembers style=黑色 from step 9 — switch to 壁纸 and expand
     page.evaluate(
@@ -642,6 +644,57 @@ with sync_playwright() as p:
         fails.append("custom background thumbnail still present after clicking its delete badge")
     elif not after_delete["bgSrc"] or "bg-sequoia" not in after_delete["bgSrc"]:
         fails.append(f"expected selection to fall back to Sequoia after deleting the selected custom background, got {after_delete['bgSrc']!r}")
+
+    # ---- 14) media grid mirrors X's own displayed aspect ratio: the second
+    # mock tweet (#tweet-2col) has two tweetPhoto containers explicitly sized
+    # 254x460 (a tall portrait ratio, like X shows a pair of portrait
+    # screenshots) — the card's grid cells must end up the same shape, not
+    # force-cropped to some generic fixed ratio. ----
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          if (!host) return;
+          const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+          const btn = btns.find((b) => b.textContent.trim() === '关闭');
+          if (btn) btn.click();
+        }"""
+    )
+    page.wait_for_timeout(150)
+    mock_ratio = page.evaluate(
+        """() => {
+          const el = document.querySelector('#tweet-2col [data-testid="tweetPhoto"]');
+          const r = el.getBoundingClientRect();
+          return r.width / r.height;
+        }"""
+    )
+    page.locator("#tweet-2col .snapcard-btn").click()
+    page.wait_for_timeout(500)
+    card_ratios = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const shadow = host.shadowRoot;
+          const card = shadow.querySelector('[style*="width: 600px"]');
+          if (!card) return null;
+          const cells = Array.from(card.querySelectorAll('div')).filter(
+            (d) => d.style.aspectRatio && d.style.position === 'relative'
+          );
+          return cells.map((c) => {
+            const r = c.getBoundingClientRect();
+            return r.width / r.height;
+          });
+        }"""
+    )
+    print(f"14) mock timeline container ratio: {mock_ratio:.4f}, card grid cell ratios: {card_ratios}")
+    if not card_ratios:
+        fails.append("could not find media grid cells (style.aspectRatio + position:relative) in the #tweet-2col card")
+    else:
+        for i, cell_ratio in enumerate(card_ratios):
+            diff = abs(cell_ratio - mock_ratio) / mock_ratio
+            if diff >= 0.05:
+                fails.append(
+                    f"card grid cell {i} aspect ratio {cell_ratio:.4f} differs from mock timeline "
+                    f"container ratio {mock_ratio:.4f} by {diff:.1%} (must be < 5%)"
+                )
 
 if console_errors:
     print("\nconsole errors captured:")
