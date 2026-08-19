@@ -54,6 +54,29 @@ with sync_playwright() as p:
             fails.append(f"expected handle '@jack' in card, shadow text was: {shadow_text[:200]!r}")
         print("   name/handle found in shadow text: OK")
 
+    # ---- 2b) body text renders as exactly 1 visual line (no bogus emoji-
+    # induced line break / indentation from whitespace-only text nodes in the
+    # source markup — getClientRects() returns one rect per wrapped line, so
+    # this is a real rendering check, not just an extracted-string check) ----
+    line_count = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const el = host.shadowRoot.querySelector('[data-snapcard-role="text-original"]');
+          if (!el) return null;
+          return el.getClientRects().length;
+        }"""
+    )
+    body_text = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const el = host.shadowRoot.querySelector('[data-snapcard-role="text-original"]');
+          return el ? el.textContent : null;
+        }"""
+    )
+    print(f"2b) body text line count: {line_count} (text: {body_text!r})")
+    if line_count != 1:
+        fails.append(f"expected mock tweet body to render as 1 line, got {line_count} (text: {body_text!r})")
+
     # ---- 3) click Download PNG, expect no JS error ----
     clicked = page.evaluate(
         """() => {
@@ -159,6 +182,52 @@ with sync_playwright() as p:
         fails.append(f"expected card background rgb(0, 0, 0) after switching to Dark, got {bg_after!r}")
     elif bg_before == bg_after:
         fails.append("card background did not change when switching from White to Dark")
+
+    # ---- 7) switching to Wallpaper actually loads the real background image ----
+    # (mock's chrome.runtime.getURL resolves to the real assets/bg-sequoia.webp
+    # on disk — a previous mock stood in a synthetic 1x1 data: URI instead,
+    # which is why an earlier screenshot review showed a blank white frame;
+    # naturalWidth > 0 here proves the real file decoded successfully in the
+    # live preview, which is what that screenshot was checking.)
+    clicked_wallpaper = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const shadow = host.shadowRoot;
+          const btns = Array.from(shadow.querySelectorAll('button'));
+          const btn = btns.find((b) => b.textContent.trim() === 'Wallpaper');
+          if (!btn) return false;
+          btn.click();
+          return true;
+        }"""
+    )
+    page.wait_for_timeout(300)
+    bg_img_info = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const bg = host.shadowRoot.querySelector('[data-snapcard-role="wallpaper-bg"]');
+          if (!bg) return null;
+          return { naturalWidth: bg.naturalWidth, naturalHeight: bg.naturalHeight, complete: bg.complete };
+        }"""
+    )
+    print(f"7) Wallpaper clicked={clicked_wallpaper}, background image: {bg_img_info}")
+    if not clicked_wallpaper:
+        fails.append("could not click the 'Wallpaper' style button")
+    elif not bg_img_info:
+        fails.append("wallpaper background <img data-snapcard-role=wallpaper-bg> not found")
+    elif not bg_img_info.get("naturalWidth"):
+        fails.append("wallpaper background image did not actually decode (naturalWidth is 0)")
+
+    # NOTE: we deliberately do NOT run the full PNG-export pipeline
+    # (renderCardToPng) on the Wallpaper frame here. render.js's inlineImages()
+    # calls fetch(url, {mode:'cors'}) to turn every <img> into a data URL
+    # before rasterizing, and this test harness loads mock.html itself via
+    # file://, so the background's resolved file:// URL makes that fetch()
+    # throw ("URL scheme file is not supported") — a real Chrome restriction
+    # on fetch-to-file, not a product bug. In the real extension the
+    # background always resolves to either a data: URL (a user-uploaded
+    # custom background, already inlined) or a chrome-extension:// URL (the
+    # bundled default, fetchable because assets/* is declared in
+    # web_accessible_resources) — neither of those hits this restriction.
 
 if console_errors:
     print("\nconsole errors captured:")

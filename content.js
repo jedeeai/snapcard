@@ -172,12 +172,22 @@
 
   // Walk a node's children, turning emoji <img alt> and inline <a> text into
   // plain text so the extracted string reads naturally (X renders emoji as
-  // <img>, and newline characters in the tweet body live in text nodes).
+  // <img>, and real paragraph breaks in the tweet body live as literal "\n"
+  // characters inside a text node's own content — never as separate
+  // whitespace-only text nodes between sibling elements).
+  //
+  // A whitespace-only text node between two elements (e.g. "\n  " sitting
+  // between a name <span> and an emoji <img>) is HTML source formatting, not
+  // tweet content — X's own React output has none of it, but nothing stops
+  // some other markup (or a hand-written test fixture) from having it. If we
+  // included it literally, an emoji between two spans would land on its own
+  // indented line. So it's folded down to a single inline space instead.
   function textWithEmoji(node) {
     let out = "";
     node.childNodes.forEach((child) => {
       if (child.nodeType === 3) {
-        out += child.nodeValue;
+        const raw = child.nodeValue;
+        out += /^\s*$/.test(raw) ? (raw.length ? " " : "") : raw;
       } else if (child.nodeType === 1) {
         if (child.tagName === "IMG") out += child.getAttribute("alt") || "";
         else if (child.tagName === "BR") out += "\n";
@@ -185,6 +195,17 @@
       }
     });
     return out;
+  }
+
+  // Collapse the inline spaces/tabs introduced above (and any the real markup
+  // had) down to single spaces, and trim spaces hugging a real newline —
+  // without touching the newlines themselves, so genuine multi-paragraph
+  // tweet text is left intact.
+  function normalizeExtractedText(s) {
+    return s
+      .replace(/[ \t]*\n[ \t]*/g, "\n")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim();
   }
 
   function toLargeAvatar(url) {
@@ -232,14 +253,14 @@
     let displayName = "";
     for (const child of container.children) {
       if (handleNode && child.contains(handleNode)) continue;
-      const text = textWithEmoji(child).trim();
+      const text = normalizeExtractedText(textWithEmoji(child));
       if (text) {
         displayName = text;
         break;
       }
     }
     if (!displayName) {
-      displayName = textWithEmoji(container).replace(handle, "").trim();
+      displayName = normalizeExtractedText(textWithEmoji(container).replace(handle, ""));
     }
     return { displayName, handle, verified };
   }
@@ -247,7 +268,7 @@
   function extractText(root) {
     const textEl = root.querySelector('[data-testid="tweetText"]');
     if (!textEl) return "";
-    return textWithEmoji(textEl).trim();
+    return normalizeExtractedText(textWithEmoji(textEl));
   }
 
   function extractImages(root) {

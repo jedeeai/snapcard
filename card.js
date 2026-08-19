@@ -127,11 +127,32 @@
 
   // ---------- media grid ----------
 
-  function buildMediaTile(src, tileStyle, withPlayBadge) {
+  function buildPlayBadge() {
+    const badge = el("div", {
+      position: "absolute",
+      right: "8px",
+      bottom: "8px",
+      background: "rgba(0,0,0,0.65)",
+      color: "#ffffff",
+      fontSize: "12px",
+      fontWeight: "600",
+      padding: "3px 8px",
+      borderRadius: "9999px",
+      display: "flex",
+      alignItems: "center",
+      gap: "4px",
+    });
+    badge.innerHTML =
+      '<svg width="10" height="10" viewBox="0 0 24 24" fill="#ffffff"><polygon points="6,4 20,12 6,20"/></svg><span>Video</span>';
+    return badge;
+  }
+
+  // Used for the 2/3/4-image grid layouts, where every cell has a *definite*
+  // size (aspect-ratio on the grid wrap resolves each 1fr row/column to real
+  // pixels), so the <img> can always fill it at 100%/100% and let
+  // object-fit:cover crop it — cropping to a fixed grid is the point there.
+  function buildGridTile(src, tileStyle, withPlayBadge) {
     const holder = el("div", { position: "relative", overflow: "hidden", ...tileStyle });
-    // holder always resolves to a definite size (aspect-ratio on the single-image
-    // wrap, or height:100% of a sized grid cell for multi-image tiles), so the
-    // <img> can always fill it at 100%/100% and let object-fit:cover crop it.
     const img = el("img", {
       width: "100%",
       height: "100%",
@@ -145,25 +166,28 @@
     // pipeline clones the card and inlines every image as a data URL
     // separately, so canvas-taint isn't a concern on this live node.
     holder.appendChild(img);
-    if (withPlayBadge) {
-      const badge = el("div", {
-        position: "absolute",
-        right: "8px",
-        bottom: "8px",
-        background: "rgba(0,0,0,0.65)",
-        color: "#ffffff",
-        fontSize: "12px",
-        fontWeight: "600",
-        padding: "3px 8px",
-        borderRadius: "9999px",
-        display: "flex",
-        alignItems: "center",
-        gap: "4px",
-      });
-      badge.innerHTML =
-        '<svg width="10" height="10" viewBox="0 0 24 24" fill="#ffffff"><polygon points="6,4 20,12 6,20"/></svg><span>Video</span>';
-      holder.appendChild(badge);
-    }
+    if (withPlayBadge) holder.appendChild(buildPlayBadge());
+    return holder;
+  }
+
+  // Used for the single-image layout: keep the image's own aspect ratio
+  // (width:100%, height:auto) instead of forcing it into a fixed box, only
+  // cropping via object-fit:cover once it would exceed max-height — so a
+  // wide landscape photo isn't squashed into a square/16:9 crop that cuts
+  // off its sides.
+  function buildSingleImageTile(src, hasVideo) {
+    const holder = el("div", { position: "relative", overflow: "hidden", borderRadius: "16px" });
+    const img = el("img", {
+      width: "100%",
+      height: "auto",
+      maxHeight: "700px",
+      display: "block",
+      objectFit: "cover",
+      borderRadius: "16px",
+    });
+    img.src = src;
+    holder.appendChild(img);
+    if (hasVideo) holder.appendChild(buildPlayBadge());
     return holder;
   }
 
@@ -171,12 +195,14 @@
     if (!images || !images.length) return null;
     const list = images.slice(0, 4);
     const n = list.length;
-    const wrap = el("div", { marginTop: "16px", borderRadius: "16px", overflow: "hidden" });
 
     if (n === 1) {
-      wrap.appendChild(buildMediaTile(list[0], { width: "100%", aspectRatio: "16/9" }, hasVideo));
+      const wrap = el("div", { marginTop: "16px" });
+      wrap.appendChild(buildSingleImageTile(list[0], hasVideo));
       return wrap;
     }
+
+    const wrap = el("div", { marginTop: "16px", borderRadius: "16px", overflow: "hidden" });
 
     if (n === 2) {
       Object.assign(wrap.style, {
@@ -186,7 +212,7 @@
         aspectRatio: "16/9",
       });
       list.forEach((src, i) =>
-        wrap.appendChild(buildMediaTile(src, { width: "100%", height: "100%" }, hasVideo && i === 0))
+        wrap.appendChild(buildGridTile(src, { width: "100%", height: "100%" }, hasVideo && i === 0))
       );
       return wrap;
     }
@@ -200,10 +226,10 @@
         aspectRatio: "16/9",
       });
       wrap.appendChild(
-        buildMediaTile(list[0], { width: "100%", height: "100%", gridRow: "1 / span 2" }, hasVideo)
+        buildGridTile(list[0], { width: "100%", height: "100%", gridRow: "1 / span 2" }, hasVideo)
       );
-      wrap.appendChild(buildMediaTile(list[1], { width: "100%", height: "100%" }));
-      wrap.appendChild(buildMediaTile(list[2], { width: "100%", height: "100%" }));
+      wrap.appendChild(buildGridTile(list[1], { width: "100%", height: "100%" }));
+      wrap.appendChild(buildGridTile(list[2], { width: "100%", height: "100%" }));
       return wrap;
     }
 
@@ -216,7 +242,7 @@
       aspectRatio: "1/1",
     });
     list.forEach((src, i) =>
-      wrap.appendChild(buildMediaTile(src, { width: "100%", height: "100%" }, hasVideo && i === 0))
+      wrap.appendChild(buildGridTile(src, { width: "100%", height: "100%" }, hasVideo && i === 0))
     );
     return wrap;
   }
@@ -307,6 +333,7 @@
       color: palette.text,
     });
     original.textContent = data.text || "";
+    original.dataset.snapcardRole = "text-original";
     body.appendChild(original);
 
     if (data.translatedText) {
@@ -318,6 +345,7 @@
         wordBreak: "break-word",
         color: palette.text,
       });
+      translated.dataset.snapcardRole = "text-translated";
       translated.textContent = data.translatedText;
       body.appendChild(divider);
       body.appendChild(translated);
@@ -401,6 +429,7 @@
       objectFit: "cover",
       display: "block",
     });
+    bg.dataset.snapcardRole = "wallpaper-bg";
     bg.src = backgroundUrl;
     wrapper.appendChild(bg);
 

@@ -10,8 +10,9 @@
      (so the theme/customBg round-trip is actually exercised), sendMessage
      always resolves { ok:false } (simulates translation being unreachable,
      which the smoke test explicitly does not need to succeed), getURL
-     returns a self-contained data: URI (1x1 gif) so the wallpaper background
-     never triggers a real network request in this offline test. -->
+     resolves to the *real* assets/ folder (mock.html lives in tests/, so
+     '../' + path reaches the actual assets/bg-sequoia.webp) — this exercises
+     the real wallpaper file end to end instead of a synthetic stand-in. -->
 <script>
   window.__sentMessages = [];
   const __syncStore = {};
@@ -19,7 +20,7 @@
   window.chrome = {
     runtime: {
       id: "fake-extension-id",
-      getURL: () => "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7",
+      getURL: (path) => "../" + path,
       sendMessage: (msg) => {
         window.__sentMessages.push(msg);
         return Promise.resolve({ ok: false, error: "mock: no network in smoke test" });
