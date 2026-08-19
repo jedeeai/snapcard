@@ -744,26 +744,144 @@
     // invoked once immediately below) always has something safe to call.
     let updateScrollHint = () => {};
 
+    // Builds the real (unscaled) card/frame that render.js will eventually
+    // export, staging it in a throwaway offscreen container only when
+    // Wallpaper mode needs a laid-out node to measure (buildWallpaperFrame's
+    // own requirement) — this node is never mounted inside previewWrap and
+    // never gets a transform/scale of its own; see renderScaledPreview below
+    // for why that separation matters.
+    function buildExportEl(cardData, cardOptions) {
+      if (state.style === "wallpaper") {
+        const card = window.SnapCard.buildCard(cardData, Object.assign({ theme: "white" }, cardOptions));
+        const stage = document.createElement("div");
+        Object.assign(stage.style, { position: "fixed", left: "-9999px", top: "0" });
+        stage.appendChild(card);
+        document.body.appendChild(stage);
+        const bgUrl = resolveBackgroundUrl(state.bgId, state.customBgs);
+        const frame = window.SnapCard.buildWallpaperFrame(card, bgUrl); // reparents card out of stage
+        document.body.removeChild(stage);
+        return frame;
+      }
+      return window.SnapCard.buildCard(cardData, Object.assign({ theme: state.style }, cardOptions));
+    }
+
+    // Scales a *clone* of exportEl down to fit within `viewport` (never
+    // touches exportEl itself — the "position:fixed got serialized into the
+    // export" fault-log entry is exactly what happens if a transform/scale
+    // ends up on the node render.js later clones for the real PNG). Wrapper
+    // gets the post-scale pixel size explicitly (transform doesn't change
+    // layout size, only paint) so surrounding flex layout doesn't reserve
+    // the full unscaled footprint.
+    function renderScaledPreview(exportEl, viewport) {
+      const previewClone = exportEl.cloneNode(true);
+
+      const probe = document.createElement("div");
+      Object.assign(probe.style, { position: "fixed", left: "-9999px", top: "0" });
+      probe.appendChild(previewClone);
+      document.body.appendChild(probe);
+      const rect = previewClone.getBoundingClientRect();
+      const naturalWidth = rect.width;
+      const naturalHeight = rect.height;
+      document.body.removeChild(probe);
+
+      const viewportRect = viewport.getBoundingClientRect();
+      const scale = Math.min(viewportRect.width / naturalWidth, viewportRect.height / naturalHeight, 1);
+
+      const scaledWrapper = document.createElement("div");
+      scaledWrapper.dataset.snapcardRole = "preview-scaled-wrapper";
+      Object.assign(scaledWrapper.style, {
+        width: `${naturalWidth * scale}px`,
+        height: `${naturalHeight * scale}px`,
+        flexShrink: "0", // never let the flex viewport squeeze this off its computed size (see the wallpaper-frame fault-log entry)
+        cursor: "zoom-in",
+        overflow: "hidden",
+      });
+
+      Object.assign(previewClone.style, { transform: `scale(${scale})`, transformOrigin: "top left" });
+      scaledWrapper.appendChild(previewClone); // moves it out of the (removed) probe
+      scaledWrapper.addEventListener("click", () => openZoomOverlay(exportEl));
+      viewport.appendChild(scaledWrapper);
+    }
+
+    // Full-size, scrollable, click-or-Esc-to-close overlay showing a clone of
+    // the real exportEl at 1:1. Temporarily unhooks the modal's own
+    // Esc-to-close (registered in createModalShell) while open: both would
+    // otherwise be capture-phase listeners on `document`, and the modal's
+    // — registered first — would fire first and close everything before this
+    // layer's own handler got a chance to just close itself.
+    function openZoomOverlay(exportEl) {
+      document.removeEventListener("keydown", host.__snapcardEsc, true);
+
+      const zoomHost = document.createElement("div");
+      zoomHost.dataset.snapcardRole = "zoom-overlay";
+      Object.assign(zoomHost.style, {
+        position: "fixed",
+        inset: "0",
+        background: "rgba(0, 0, 0, 0.85)",
+        zIndex: "2147483647",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "flex-start",
+        overflow: "auto",
+        cursor: "zoom-out",
+        padding: "40px",
+        boxSizing: "border-box",
+      });
+
+      const zoomClone = exportEl.cloneNode(true);
+      zoomClone.dataset.snapcardRole = "zoom-clone";
+      zoomClone.style.cursor = "zoom-out";
+      zoomClone.style.flexShrink = "0";
+      zoomHost.appendChild(zoomClone);
+
+      function close() {
+        if (zoomHost.parentNode) zoomHost.parentNode.removeChild(zoomHost);
+        document.removeEventListener("keydown", escHandler, true);
+        document.addEventListener("keydown", host.__snapcardEsc, true); // restore the modal's own Esc-to-close
+      }
+      zoomHost.addEventListener("click", close); // click *anywhere* in the layer closes it
+      const escHandler = (e) => {
+        if (e.key === "Escape") close();
+      };
+      document.addEventListener("keydown", escHandler, true);
+
+      shadow.appendChild(zoomHost);
+    }
+
     function rebuildCard() {
       previewWrap.innerHTML = ""; // clears the loading spinner on the first call
       const cardData = Object.assign({}, data, { translatedText: state.translatedText });
       const cardOptions = { watermark: options.watermark, hideStats: state.hideStats, hideTime: state.hideTime };
-      if (state.style === "wallpaper") {
-        // Wallpaper is always the white card, framed on a background image.
-        const card = window.SnapCard.buildCard(cardData, Object.assign({ theme: "white" }, cardOptions));
-        previewWrap.appendChild(card); // mount first — buildWallpaperFrame needs a laid-out node to measure
-        const bgUrl = resolveBackgroundUrl(state.bgId, state.customBgs);
-        const frame = window.SnapCard.buildWallpaperFrame(card, bgUrl);
-        previewWrap.innerHTML = "";
-        previewWrap.appendChild(frame);
-        state.exportEl = frame;
-      } else {
-        const card = window.SnapCard.buildCard(cardData, Object.assign({ theme: state.style }, cardOptions));
-        previewWrap.appendChild(card);
-        state.exportEl = card;
-      }
+
+      state.exportEl = buildExportEl(cardData, cardOptions);
+      // exportEl is intentionally never mounted inside previewWrap (the
+      // visible preview shows a *scaled clone* of it — see
+      // renderScaledPreview), so it isn't reachable via a shadow DOM query at
+      // all. This reference exists purely so tests/smoke.py can get at the
+      // real, unscaled, about-to-be-exported node; nothing else reads it.
+      host.__snapcardExportEl = state.exportEl;
+
+      // Fixed-height viewport (~56vh, full panel content width) the scaled
+      // card is centered inside — this is what "fits the whole card on one
+      // screen" actually means; recomputed on every rebuild (style/background/
+      // translation/hide-toggle changes) since the card's natural size can
+      // change with any of those.
+      const viewport = document.createElement("div");
+      viewport.dataset.snapcardRole = "preview-viewport";
+      Object.assign(viewport.style, {
+        width: "100%",
+        height: "56vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      });
+      previewWrap.appendChild(viewport);
+      renderScaledPreview(state.exportEl, viewport);
+
       // Content height may have just changed (style switch, translation
       // added/removed a block) — re-check whether the panel now overflows.
+      // (Should rarely fire now that the preview always fits ~56vh, but kept
+      // as a fallback for anything the fit-to-view math doesn't cover.)
       updateScrollHint();
     }
     rebuildCard();

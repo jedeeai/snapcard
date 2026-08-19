@@ -181,8 +181,11 @@ with sync_playwright() as p:
     pixel_info = page.evaluate(
         """async () => {
           const host = document.getElementById('snapcard-host');
-          const shadow = host.shadowRoot;
-          const cardNode = shadow.querySelector('[style*="width: 600px"]');
+          // host.__snapcardExportEl is the real, unscaled node — the visible
+          // preview only ever shows a *scaled clone* of it now (fit-to-view),
+          // so querying the shadow DOM for "the card" would grab that scaled
+          // clone instead and produce a shrunk canvas.
+          const cardNode = host.__snapcardExportEl;
           if (!cardNode) return { error: 'card node not found' };
           const { canvas } = await window.SnapCard.renderCardToPng(cardNode, 1);
           const ctx = canvas.getContext('2d');
@@ -218,8 +221,8 @@ with sync_playwright() as p:
     bg_before = page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
-          const cardNode = host.shadowRoot.querySelector('[style*="width: 600px"]');
-          return cardNode ? getComputedStyle(cardNode).backgroundColor : null;
+          const cardNode = host.__snapcardExportEl;
+          return cardNode ? cardNode.style.backgroundColor : null; // .style, not getComputedStyle — cardNode is a detached node now (see __snapcardExportEl comment above), getComputedStyle returns '' for detached nodes
         }"""
     )
     clicked_dark = page.evaluate(
@@ -237,8 +240,8 @@ with sync_playwright() as p:
     bg_after = page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
-          const cardNode = host.shadowRoot.querySelector('[style*="width: 600px"]');
-          return cardNode ? getComputedStyle(cardNode).backgroundColor : null;
+          const cardNode = host.__snapcardExportEl;
+          return cardNode ? cardNode.style.backgroundColor : null; // .style, not getComputedStyle — cardNode is a detached node now (see __snapcardExportEl comment above), getComputedStyle returns '' for detached nodes
         }"""
     )
     print(f"6) 黑色 clicked={clicked_dark}, background {bg_before!r} -> {bg_after!r}")
@@ -302,11 +305,21 @@ with sync_playwright() as p:
     pad_info = page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
-          const frame = host.shadowRoot.querySelector('[data-snapcard-role="wallpaper-frame"]');
-          const card = frame ? frame.querySelector('[style*="width: 600px"]') : null;
-          if (!frame || !card) return null;
-          const f = frame.getBoundingClientRect();
+          // host.__snapcardExportEl (the real frame) is detached — the
+          // preview only ever mounts a *scaled clone* of it now — so mount a
+          // fresh clone off-screen ourselves to get real, unscaled numbers.
+          const original = host.__snapcardExportEl;
+          if (!original) return null;
+          const clone = original.cloneNode(true);
+          const probe = document.createElement('div');
+          Object.assign(probe.style, { position: 'fixed', left: '-9999px', top: '0' });
+          probe.appendChild(clone);
+          document.body.appendChild(probe);
+          const card = clone.querySelector('[style*="width: 600px"]');
+          if (!card) { document.body.removeChild(probe); return null; }
+          const f = clone.getBoundingClientRect();
           const c = card.getBoundingClientRect();
+          document.body.removeChild(probe);
           return {
             left: Math.round(c.left - f.left),
             right: Math.round(f.right - c.right),
@@ -379,8 +392,8 @@ with sync_playwright() as p:
           const host = document.getElementById('snapcard-host');
           if (!host || !host.shadowRoot) return null;
           const shadow = host.shadowRoot;
-          const cardNode = shadow.querySelector('[style*="width: 600px"]');
-          const bg = cardNode ? getComputedStyle(cardNode).backgroundColor : null;
+          const cardNode = host.__snapcardExportEl;
+          const bg = cardNode ? cardNode.style.backgroundColor : null; // .style, not getComputedStyle — see the __snapcardExportEl comment above
           const btns = Array.from(shadow.querySelectorAll('button'));
           const darkBtn = btns.find((b) => b.textContent.trim() === '黑色');
           const darkSelected = darkBtn ? getComputedStyle(darkBtn).backgroundColor === 'rgb(29, 155, 240)' : null;
@@ -721,16 +734,25 @@ with sync_playwright() as p:
     card_ratios = page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
-          const shadow = host.shadowRoot;
-          const card = shadow.querySelector('[style*="width: 600px"]');
-          if (!card) return null;
+          // host.__snapcardExportEl is detached (only a *scaled clone* of it
+          // is mounted, for the fit-to-view preview) — mount a fresh clone
+          // off-screen to get real, unscaled numbers.
+          const original = host.__snapcardExportEl;
+          if (!original) return null;
+          const card = original.cloneNode(true);
+          const probe = document.createElement('div');
+          Object.assign(probe.style, { position: 'fixed', left: '-9999px', top: '0' });
+          probe.appendChild(card);
+          document.body.appendChild(probe);
           const cells = Array.from(card.querySelectorAll('div')).filter(
             (d) => d.style.aspectRatio && d.style.position === 'relative'
           );
-          return cells.map((c) => {
+          const result = cells.map((c) => {
             const r = c.getBoundingClientRect();
             return r.width / r.height;
           });
+          document.body.removeChild(probe);
+          return result;
         }"""
     )
     print(f"14) mock timeline container ratio: {mock_ratio:.4f}, card grid cell ratios: {card_ratios}")
@@ -744,6 +766,106 @@ with sync_playwright() as p:
                     f"card grid cell {i} aspect ratio {cell_ratio:.4f} differs from mock timeline "
                     f"container ratio {mock_ratio:.4f} by {diff:.1%} (must be < 5%)"
                 )
+
+    # ---- 15a) fit-to-view: the #tweet-2col modal (still open from step 14,
+    # tall portrait card that needs shrinking) must show the whole card within
+    # the ~56vh preview viewport — scaled wrapper height must not exceed it ----
+    fit_info = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const viewport = host.shadowRoot.querySelector('[data-snapcard-role="preview-viewport"]');
+          const wrapper = host.shadowRoot.querySelector('[data-snapcard-role="preview-scaled-wrapper"]');
+          if (!viewport || !wrapper) return null;
+          const vr = viewport.getBoundingClientRect();
+          const wr = wrapper.getBoundingClientRect();
+          return { viewportHeight: vr.height, wrapperHeight: wr.height };
+        }"""
+    )
+    print("15a) fit-to-view (viewport vs scaled wrapper height):", fit_info)
+    if not fit_info:
+        fails.append("preview viewport / scaled-wrapper not found")
+    elif fit_info["wrapperHeight"] > fit_info["viewportHeight"] + 1:  # +1px rounding fuzz
+        fails.append(
+            f"scaled preview wrapper height {fit_info['wrapperHeight']} exceeds "
+            f"viewport height {fit_info['viewportHeight']} — card not fully visible"
+        )
+
+    # ---- 15b) click-to-zoom: clicking the scaled preview opens a full-size
+    # overlay containing a *clone* of the card; Esc closes just that layer,
+    # leaving the modal itself open (not the whole thing) ----
+    clicked_preview = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const wrapper = host.shadowRoot.querySelector('[data-snapcard-role="preview-scaled-wrapper"]');
+          if (!wrapper) return false;
+          wrapper.click();
+          return true;
+        }"""
+    )
+    page.wait_for_timeout(150)
+    zoom_info = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const overlay = host.shadowRoot.querySelector('[data-snapcard-role="zoom-overlay"]');
+          const clone = overlay ? overlay.querySelector('[data-snapcard-role="zoom-clone"]') : null;
+          return { overlayFound: !!overlay, cloneFound: !!clone };
+        }"""
+    )
+    print(f"15b) clicked preview={clicked_preview}, zoom overlay: {zoom_info}")
+    if not clicked_preview:
+        fails.append("could not click the scaled preview wrapper")
+    if not zoom_info.get("overlayFound"):
+        fails.append("zoom overlay did not appear after clicking the preview")
+    if not zoom_info.get("cloneFound"):
+        fails.append("zoom overlay is missing the card clone")
+
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(150)
+    after_esc = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          return {
+            modalOpen: !!host,
+            overlayGone: !host.shadowRoot.querySelector('[data-snapcard-role="zoom-overlay"]'),
+          };
+        }"""
+    )
+    print("    after Esc:", after_esc)
+    if not after_esc.get("modalOpen"):
+        fails.append("Esc while zoomed closed the whole modal, not just the zoom layer")
+    if not after_esc.get("overlayGone"):
+        fails.append("zoom overlay still present after pressing Esc")
+
+    # ---- 15c) export size is unaffected by the preview's fit-to-view scale:
+    # exporting at scale=2 must still produce a 1200px-wide canvas (600px
+    # fixed card width x 2), not something shrunk by whatever the preview
+    # happened to be scaled to. This modal inherited theme="wallpaper" from
+    # earlier steps' shared storage.sync memory (expected behavior — style
+    # memory is global, not per-tweet), so switch back to 白色 first to test
+    # against a plain 600px card as intended, and to avoid the wallpaper
+    # background's known file://-fetch console error (see fault log) from
+    # firing during an otherwise-unrelated check. ----
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+          const btn = btns.find((b) => b.textContent.trim() === '白色');
+          if (btn) btn.click();
+        }"""
+    )
+    page.wait_for_timeout(150)
+    export_size = page.evaluate(
+        """async () => {
+          const host = document.getElementById('snapcard-host');
+          const exportEl = host.__snapcardExportEl;
+          if (!exportEl) return null;
+          const { canvas } = await window.SnapCard.renderCardToPng(exportEl, 2);
+          return { width: canvas.width, height: canvas.height };
+        }"""
+    )
+    print("15c) export canvas size at scale=2:", export_size)
+    if not export_size or export_size.get("width") != 1200:
+        fails.append(f"expected export canvas width 1200 (600x2, unaffected by preview scale), got {export_size}")
 
 if console_errors:
     print("\nconsole errors captured:")
