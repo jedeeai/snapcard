@@ -11,7 +11,7 @@
 - 在每条推文的互动栏（回复/转发/点赞旁边）加一个小相机图标
 - 点一下生成卡片：头像、昵称、@handle、正文、配图、互动数据
 - 三种卡片样式：白色、黑色、壁纸（卡片居中放在背景图上，带柔和阴影），选择会被记住
-- 壁纸样式自带一张默认背景图，也支持上传自己的图片
+- 壁纸样式内置 7 张原创渐变背景，也支持上传自己的图片。喜欢 macOS 官方壁纸的用户可以自行去苹果官网下载，再用「上传背景」用上（插件本身不内置任何苹果版权素材）
 - 可选一键翻译成中文（谷歌翻译），生成原文+译文的双语卡片
 - 支持下载 PNG，或直接复制图片到剪贴板
 - 可选在卡片右下角显示 SnapCard 署名水印，默认关闭，插件弹窗里可以打开
@@ -50,8 +50,6 @@ SnapCard 只读取当前页面的 DOM，不收集、不存储、不上传任何�
 
 MIT，见 [LICENSE](LICENSE)。
 
-内置的默认壁纸是苹果 macOS 官方壁纸，仅供个人使用；如需分发请替换 `assets/bg-sequoia.webp` 为你自己的图片。
-
 ---
 
 # SnapCard
@@ -69,7 +67,10 @@ Turn any post on X (Twitter) into a beautiful, shareable card — right from you
 - One click generates a clean card with the avatar, name, handle, text, images and stats
 - Three card styles — White (白色), Dark (黑色), and Wallpaper (壁纸: the card centered
   on a background photo with a soft drop shadow) — remembered as your default for next time
-- Wallpaper mode ships with a built-in background, or upload your own photo
+- Wallpaper mode ships with 7 built-in original gradient backgrounds, or upload your own photo.
+  If you'd rather use one of Apple's official macOS wallpapers, download it yourself from
+  Apple's site and add it via "Upload background" — the extension itself ships no
+  Apple-copyrighted assets
 - Optional one-click translation into Chinese (via Google Translate) for a bilingual card
 - Download as PNG, or copy the rendered image straight to your clipboard
 - Optional "SnapCard" watermark in the corner of the card — off by default, can be
@@ -119,6 +120,3 @@ not collect, store, or transmit any of your data.
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-The bundled wallpaper is an Apple macOS wallpaper included for personal use;
-replace `assets/bg-sequoia.webp` to ship your own.

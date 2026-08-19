@@ -532,20 +532,23 @@
   }
 
   // ---------- wallpaper background picker ----------
-  // 7 built-in real photos (bundled in assets/), or "custom" (user-uploaded
-  // photo, stored separately in chrome.storage.local as customBg).
-  // `name` is a proper noun (photo name) and stays untranslated in both
-  // locales; the "壁纸/Wallpaper" suffix shown to the user is appended at
-  // render time via t("wallpaperSuffix") — see renderBgThumbnails below —
-  // so it follows the UI language instead of being baked in here.
+  // 7 built-in original gradient photos (bundled in assets/, self-made —
+  // replaced the earlier Apple macOS wallpapers so the extension ships no
+  // Apple-copyrighted assets, see the CLAUDE.md fault log for why), or
+  // "custom" (user-uploaded photo, stored separately in chrome.storage.local
+  // as customBg). `name` is a proper noun (photo name) and stays
+  // untranslated in both locales; the "壁纸/Wallpaper" suffix shown to the
+  // user is appended at render time via t("wallpaperSuffix") — see
+  // renderBgThumbnails below — so it follows the UI language instead of
+  // being baked in here.
   const BUILTIN_BACKGROUNDS = [
-    { id: "sequoia", name: "Sequoia", file: "assets/bg-sequoia.webp" },
-    { id: "sparrow", name: "Sparrow", file: "assets/bg-sparrow.webp" },
-    { id: "silver", name: "Silver", file: "assets/bg-silver.webp" },
-    { id: "rose-gold", name: "Rose Gold", file: "assets/bg-rose-gold.webp" },
-    { id: "albany-gold", name: "Albany Gold", file: "assets/bg-albany-gold.webp" },
-    { id: "space-gray", name: "Space Gray", file: "assets/bg-space-gray.webp" },
-    { id: "gradient-dark", name: "Gradient Dark", file: "assets/bg-gradient-dark.webp" },
+    { id: "aurora", name: "Aurora", file: "assets/bg-aurora.jpg" },
+    { id: "sunset", name: "Sunset", file: "assets/bg-sunset.jpg" },
+    { id: "rose", name: "Rose", file: "assets/bg-rose.jpg" },
+    { id: "ocean", name: "Ocean", file: "assets/bg-ocean.jpg" },
+    { id: "violet", name: "Violet", file: "assets/bg-violet.jpg" },
+    { id: "golden", name: "Golden", file: "assets/bg-golden.jpg" },
+    { id: "graphite", name: "Graphite", file: "assets/bg-graphite.jpg" },
   ];
 
   function builtinBackgroundUrl(entry) {
@@ -566,9 +569,9 @@
   function getSavedBackgroundId() {
     return new Promise((resolve) => {
       try {
-        chrome.storage.sync.get({ wallpaperBg: "sequoia" }, (res) => resolve(res.wallpaperBg || "sequoia"));
+        chrome.storage.sync.get({ wallpaperBg: "aurora" }, (res) => resolve(res.wallpaperBg || "aurora"));
       } catch (_) {
-        resolve("sequoia");
+        resolve("aurora");
       }
     });
   }
@@ -586,7 +589,7 @@
   // position, recomputed on every render. That means a deletion earlier in
   // the array naturally "renumbers" everything after it for free; the only
   // thing that can go stale is a *previously selected* id pointing past the
-  // end of a shrunk array, which this treats as "fall back to Sequoia".
+  // end of a shrunk array, which this treats as "fall back to Aurora".
   function resolveBackgroundUrl(bgId, customBgs) {
     if (typeof bgId === "string" && bgId.indexOf("custom:") === 0) {
       const idx = parseInt(bgId.slice(7), 10);
@@ -595,19 +598,31 @@
     }
     const entry = BUILTIN_BACKGROUNDS.find((b) => b.id === bgId);
     if (entry) return builtinBackgroundUrl(entry);
-    return defaultWallpaperUrl(); // unrecognized id — safe fallback to Sequoia
+    return defaultWallpaperUrl(); // unrecognized id (including any retired Apple-wallpaper id like "sequoia") — safe fallback to Aurora
   }
 
   // Validates a persisted bgId against the actual customBgs array length —
   // used once when a modal opens, so a stale "custom:N" from a since-deleted
-  // image falls back to Sequoia instead of silently resolving to whatever
+  // image falls back to Aurora instead of silently resolving to whatever
   // image now happens to occupy that slot (or nothing, if the array shrank).
+  // Also the retired-Apple-wallpaper compatibility path: a user who had one
+  // of the old lineup selected (sequoia/sparrow/silver/rose-gold/
+  // albany-gold/space-gray/gradient-dark, from before the 2026-08-20 asset
+  // swap — see CLAUDE.md fault log) has that id still sitting in
+  // chrome.storage.sync, and it no longer matches any BUILTIN_BACKGROUNDS
+  // entry — falls back to Aurora here rather than leaving state.bgId pointed
+  // at a dead id (which would otherwise resolve to the right background via
+  // resolveBackgroundUrl's own fallback, but leave no thumbnail showing as
+  // selected — the thumbnail row's "selected" check is `state.bgId ===
+  // item.id`, a strict match against the *current* BUILTIN_BACKGROUNDS ids).
   function sanitizeBgId(bgId, customBgs) {
     if (typeof bgId === "string" && bgId.indexOf("custom:") === 0) {
       const idx = parseInt(bgId.slice(7), 10);
-      if (!(Array.isArray(customBgs) && idx >= 0 && idx < customBgs.length)) return "sequoia";
+      if (!(Array.isArray(customBgs) && idx >= 0 && idx < customBgs.length)) return "aurora";
+      return bgId;
     }
-    return bgId || "sequoia";
+    if (BUILTIN_BACKGROUNDS.some((b) => b.id === bgId)) return bgId;
+    return "aurora"; // unrecognized id (missing, or a retired Apple-wallpaper id) — fall back to Aurora
   }
 
   // Downscale an uploaded image file to a data URL, longest side capped at
@@ -833,7 +848,7 @@
       customBgs: options.customBgs || [],
       hideStats: !!options.hideStats,
       hideTime: !!options.hideTime,
-      bgId: options.bgId || "sequoia",
+      bgId: options.bgId || "aurora",
       exportEl: null, // the node render.js should actually export (card, or card+wallpaper frame)
     };
 
@@ -1109,8 +1124,8 @@
           state.customBgs = next;
           await setCustomBackgrounds(next);
           if (wasSelected) {
-            state.bgId = "sequoia";
-            saveBackgroundId("sequoia");
+            state.bgId = "aurora";
+            saveBackgroundId("aurora");
           } else if (typeof state.bgId === "string" && state.bgId.indexOf("custom:") === 0) {
             // ids are array positions, not stable per-image — deleting an
             // earlier custom image shifts every later one down by one, so a

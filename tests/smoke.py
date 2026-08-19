@@ -269,11 +269,12 @@ with sync_playwright() as p:
         fails.append("card background did not change when switching from 白色 to 黑色")
 
     # ---- 7) switching to 壁纸 (Wallpaper) actually loads the real background image ----
-    # (mock's chrome.runtime.getURL resolves to the real assets/bg-sequoia.webp
+    # (mock's chrome.runtime.getURL resolves to the real assets/bg-aurora.jpg
     # on disk — a previous mock stood in a synthetic 1x1 data: URI instead,
     # which is why an earlier screenshot review showed a blank white frame;
-    # naturalWidth > 0 here proves the real file decoded successfully in the
-    # live preview, which is what that screenshot was checking.)
+    # naturalWidth 1400 here proves the real file — the self-made gradient
+    # that replaced the Apple wallpapers on 2026-08-20, see CLAUDE.md fault
+    # log — decoded successfully in the live preview, not just some image.)
     clicked_wallpaper = page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
@@ -301,6 +302,8 @@ with sync_playwright() as p:
         fails.append("wallpaper background <img data-snapcard-role=wallpaper-bg> not found")
     elif not bg_img_info.get("naturalWidth"):
         fails.append("wallpaper background image did not actually decode (naturalWidth is 0)")
+    elif bg_img_info.get("naturalWidth") != 1400:
+        fails.append(f"expected default background bg-aurora.jpg to load at naturalWidth 1400, got {bg_img_info}")
 
     # NOTE: we deliberately do NOT run the full PNG-export pipeline
     # (renderCardToPng) on the Wallpaper frame here. render.js's inlineImages()
@@ -591,17 +594,17 @@ with sync_playwright() as p:
     if recollapsed_count != 1:
         fails.append(f"expected background row to collapse back to 1 round thumbnail, got {recollapsed_count}")
 
-    # ---- 12) switching to bg-gradient-dark actually loads that real file
-    # (naturalWidth 700 is that image's true pixel width on disk — asserting
+    # ---- 12) switching to bg-graphite.jpg actually loads that real file
+    # (naturalWidth 1400 is that image's true pixel width on disk — asserting
     # the exact number, not just >0, proves the *right* file loaded, not just
     # *some* image) ----
-    click_bg_toggle()  # expand again so the gradient-dark thumbnail exists
+    click_bg_toggle()  # expand again so the graphite thumbnail exists
     page.wait_for_timeout(100)
-    clicked_gradient_dark = page.evaluate(
+    clicked_graphite = page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
           const items = Array.from(host.shadowRoot.querySelectorAll('button')).filter(
-            (el) => el.style.borderRadius === '50%' && el.title === 'Gradient Dark 壁纸'
+            (el) => el.style.borderRadius === '50%' && el.title === 'Graphite 壁纸'
           );
           if (!items.length) return false;
           items[0].click();
@@ -609,24 +612,26 @@ with sync_playwright() as p:
         }"""
     )
     page.wait_for_timeout(300)
-    gradient_dark_info = page.evaluate(
+    graphite_info = page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
           const bg = host.shadowRoot.querySelector('[data-snapcard-role="wallpaper-bg"]');
           return bg ? { naturalWidth: bg.naturalWidth, naturalHeight: bg.naturalHeight } : null;
         }"""
     )
-    print(f"12) bg-gradient-dark clicked={clicked_gradient_dark}, background image: {gradient_dark_info}")
-    if not clicked_gradient_dark:
-        fails.append("could not find/click the 'Gradient Dark 壁纸' thumbnail")
-    elif not gradient_dark_info or gradient_dark_info.get("naturalWidth") != 700:
-        fails.append(f"expected bg-gradient-dark.webp to load at naturalWidth 700, got {gradient_dark_info}")
+    print(f"12) bg-graphite.jpg clicked={clicked_graphite}, background image: {graphite_info}")
+    if not clicked_graphite:
+        fails.append("could not find/click the 'Graphite 壁纸' thumbnail")
+    elif not graphite_info or graphite_info.get("naturalWidth") != 1400:
+        fails.append(f"expected bg-graphite.jpg to load at naturalWidth 1400, got {graphite_info}")
 
     # ---- 13) custom backgrounds are deletable: inject a fake custom
     # background directly into the storage mock, reopen the modal, select it,
     # confirm it (and only it, not the 7 built-ins) shows a delete badge,
     # delete it, confirm it disappears from the row and — since it was the
-    # selected background — the selection falls back to Sequoia. ----
+    # selected background — the selection falls back to Aurora (the default
+    # background since the 2026-08-20 Apple-wallpaper-to-original-gradient
+    # swap — see CLAUDE.md fault log). ----
     page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
@@ -664,10 +669,10 @@ with sync_playwright() as p:
           const wrap = thumb.parentElement;
           const del = wrap.querySelector('[data-snapcard-role="bg-delete"]');
           // built-ins must NOT have a delete badge
-          const sequoiaThumb = Array.from(shadow.querySelectorAll('button')).find((b) => b.title === 'Sequoia 壁纸');
-          const sequoiaDel = sequoiaThumb ? sequoiaThumb.parentElement.querySelector('[data-snapcard-role="bg-delete"]') : 'missing-thumb';
+          const auroraThumb = Array.from(shadow.querySelectorAll('button')).find((b) => b.title === 'Aurora 壁纸');
+          const auroraDel = auroraThumb ? auroraThumb.parentElement.querySelector('[data-snapcard-role="bg-delete"]') : 'missing-thumb';
           thumb.click(); // select the custom background
-          return { found: true, hasDeleteBadge: !!del, builtinHasDeleteBadge: !!sequoiaDel };
+          return { found: true, hasDeleteBadge: !!del, builtinHasDeleteBadge: !!auroraDel };
         }"""
     )
     page.wait_for_timeout(150)
@@ -678,7 +683,7 @@ with sync_playwright() as p:
         if not custom_thumb_check.get("hasDeleteBadge"):
             fails.append("custom background thumbnail is missing its delete badge")
         if custom_thumb_check.get("builtinHasDeleteBadge"):
-            fails.append("a built-in background (Sequoia) unexpectedly has a delete badge")
+            fails.append("a built-in background (Aurora) unexpectedly has a delete badge")
 
     bg_selected_before_delete = page.evaluate(
         """() => {
@@ -720,8 +725,8 @@ with sync_playwright() as p:
         fails.append("could not find/click the delete badge on the custom background thumbnail")
     elif after_delete["stillThere"]:
         fails.append("custom background thumbnail still present after clicking its delete badge")
-    elif not after_delete["bgSrc"] or "bg-sequoia" not in after_delete["bgSrc"]:
-        fails.append(f"expected selection to fall back to Sequoia after deleting the selected custom background, got {after_delete['bgSrc']!r}")
+    elif not after_delete["bgSrc"] or "bg-aurora" not in after_delete["bgSrc"]:
+        fails.append(f"expected selection to fall back to Aurora after deleting the selected custom background, got {after_delete['bgSrc']!r}")
 
     # ---- 14) media grid mirrors X's own displayed aspect ratio: the second
     # mock tweet (#tweet-2col) has two tweetPhoto containers explicitly sized
