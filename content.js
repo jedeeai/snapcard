@@ -452,6 +452,7 @@
   function closeModal(host) {
     if (host && host.parentNode) host.parentNode.removeChild(host);
     document.removeEventListener("keydown", host.__snapcardEsc, true);
+    if (host.__snapcardResize) window.removeEventListener("resize", host.__snapcardResize);
   }
 
   async function handleGenerateClick(article) {
@@ -521,6 +522,11 @@
       exportEl: null, // the node render.js should actually export (card, or card+wallpaper frame)
     };
 
+    // Real implementation is assigned further down, once the hint element
+    // exists — this placeholder just means rebuildCard() (defined next, and
+    // invoked once immediately below) always has something safe to call.
+    let updateScrollHint = () => {};
+
     function rebuildCard() {
       previewWrap.innerHTML = "";
       const cardData = Object.assign({}, data, { translatedText: state.translatedText });
@@ -538,6 +544,9 @@
         previewWrap.appendChild(card);
         state.exportEl = card;
       }
+      // Content height may have just changed (style switch, translation
+      // added/removed a block) — re-check whether the panel now overflows.
+      updateScrollHint();
     }
     rebuildCard();
 
@@ -720,7 +729,27 @@
       return btn;
     }
 
-    const downloadBtn = makeButton("下载 PNG", true);
+    // Copy is the primary action (most users copy-and-paste straight into a
+    // chat rather than saving a file), so it gets the primary button style
+    // and goes first; Download is secondary.
+    const copyBtn = makeButton("复制图片", true);
+    copyBtn.addEventListener("click", async () => {
+      const originalLabel = copyBtn.textContent;
+      copyBtn.disabled = true;
+      try {
+        const { blob } = await window.SnapCard.renderCardToPng(state.exportEl, 2);
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+        copyBtn.textContent = "已复制 ✓";
+      } catch (e) {
+        copyBtn.textContent = "复制失败";
+      }
+      setTimeout(() => {
+        copyBtn.textContent = originalLabel;
+        copyBtn.disabled = false;
+      }, 1500);
+    });
+
+    const downloadBtn = makeButton("下载 PNG", false);
     downloadBtn.addEventListener("click", async () => {
       const originalLabel = downloadBtn.textContent;
       downloadBtn.textContent = "生成中…";
@@ -741,36 +770,68 @@
       downloadBtn.disabled = false;
     });
 
-    const copyBtn = makeButton("复制图片", false);
-    copyBtn.addEventListener("click", async () => {
-      const originalLabel = copyBtn.textContent;
-      copyBtn.disabled = true;
-      try {
-        const { blob } = await window.SnapCard.renderCardToPng(state.exportEl, 2);
-        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-        copyBtn.textContent = "已复制 ✓";
-      } catch (e) {
-        copyBtn.textContent = "复制失败";
-      }
-      setTimeout(() => {
-        copyBtn.textContent = originalLabel;
-        copyBtn.disabled = false;
-      }, 1500);
-    });
-
     const closeBtn = makeButton("关闭", false);
     closeBtn.addEventListener("click", () => closeModal(host));
 
-    rightControls.appendChild(downloadBtn);
     rightControls.appendChild(copyBtn);
+    rightControls.appendChild(downloadBtn);
     rightControls.appendChild(closeBtn);
 
     controls.appendChild(leftControls);
     controls.appendChild(rightControls);
     panel.appendChild(controls);
 
+    // ----- scroll hint -----
+    // panel itself is the scroll container (maxHeight:90vh, overflow:auto —
+    // the controls row is a normal in-flow child and scrolls away with tall
+    // content, by design, not a sticky footer). When that happens the user
+    // can lose track of where the copy/download buttons went, so a small
+    // pill floats over the panel's bottom-right corner as a nudge.
+    //
+    // It's appended to `shadow` (a sibling of `overlay`, not a child of the
+    // scrolling `panel`) and positioned with position:fixed computed from
+    // panel's own getBoundingClientRect() — a fixed-position descendant of
+    // panel would scroll away with panel's content (its containing block is
+    // panel's scrollable padding box), which defeats the purpose.
+    const scrollHint = document.createElement("div");
+    scrollHint.textContent = "复制按钮在下面 ↓";
+    Object.assign(scrollHint.style, {
+      position: "fixed",
+      background: "rgba(15, 20, 25, 0.85)",
+      color: "#ffffff",
+      fontSize: "13px",
+      padding: "8px 14px",
+      borderRadius: "9999px",
+      pointerEvents: "none",
+      transition: "opacity 0.2s ease",
+      opacity: "0",
+      zIndex: "2147483647",
+    });
+
+    function positionScrollHint() {
+      const rect = panel.getBoundingClientRect();
+      scrollHint.style.right = `${window.innerWidth - rect.right + 16}px`;
+      scrollHint.style.bottom = `${window.innerHeight - rect.bottom + 16}px`;
+    }
+
+    updateScrollHint = () => {
+      const overflowing = panel.scrollHeight > panel.clientHeight + 1; // +1: subpixel rounding fuzz
+      if (!overflowing) {
+        scrollHint.style.opacity = "0";
+        return;
+      }
+      positionScrollHint();
+      const remaining = panel.scrollHeight - panel.scrollTop - panel.clientHeight;
+      scrollHint.style.opacity = remaining < 40 ? "0" : "1";
+    };
+    panel.addEventListener("scroll", updateScrollHint);
+    host.__snapcardResize = updateScrollHint;
+    window.addEventListener("resize", updateScrollHint);
+
     overlay.appendChild(panel);
     shadow.appendChild(overlay);
+    shadow.appendChild(scrollHint);
+    updateScrollHint(); // panel is laid out now — set the correct initial state
 
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay) closeModal(host);

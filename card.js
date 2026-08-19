@@ -410,25 +410,38 @@
 
   // ---------- wallpaper frame ----------
 
+  // Fixed equal padding on all four sides — NOT a percentage of the card's
+  // own size. A percentage-based pad made tall (portrait-ish) cards end up
+  // with visibly larger top/bottom margins than left/right, which is what a
+  // real screenshot from a user caught; a flat pixel value keeps all four
+  // sides identical regardless of the card's aspect ratio.
+  const WALLPAPER_PAD = 60;
+
   // Wraps an already-mounted (laid out) card element in a background-image
-  // frame: canvas padded ~15% of the card's own width/height on each side,
-  // background image cover-cropped to fill it, card given a soft drop shadow.
-  // Must be called after cardEl is attached to a live, visible document —
-  // getBoundingClientRect needs real layout to measure against.
+  // frame: canvas padded WALLPAPER_PAD px on each side, background image
+  // cover-cropped to fill it, card given a soft drop shadow. Must be called
+  // after cardEl is attached to a live, visible document — getBoundingClientRect
+  // needs real layout to measure against.
   function buildWallpaperFrame(cardEl, backgroundUrl) {
     const rect = cardEl.getBoundingClientRect();
     const w = Math.max(1, Math.round(rect.width));
     const h = Math.max(1, Math.round(rect.height));
-    const padX = Math.round(w * 0.15);
-    const padY = Math.round(h * 0.15);
 
     const wrapper = el("div", {
       position: "relative",
-      width: `${w + padX * 2}px`,
-      height: `${h + padY * 2}px`,
+      width: `${w + WALLPAPER_PAD * 2}px`,
+      height: `${h + WALLPAPER_PAD * 2}px`,
+      // Prevent a flexbox ancestor (the modal's preview area) from shrinking
+      // this below its intended width to fit the panel's own max-width. A
+      // flex row only compresses the main (horizontal) axis, so without this
+      // the left/right padding would get visibly squeezed while top/bottom
+      // stayed at the full WALLPAPER_PAD — the exact asymmetry a real user
+      // screenshot caught.
+      flexShrink: "0",
       boxSizing: "border-box",
       overflow: "hidden",
     });
+    wrapper.dataset.snapcardRole = "wallpaper-frame";
 
     // Background layer: a plain <img> (not CSS background-image) so
     // render.js's existing "find every <img> and inline it as a data URL"

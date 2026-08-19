@@ -265,6 +265,108 @@ with sync_playwright() as p:
     # bundled default, fetchable because assets/* is declared in
     # web_accessible_resources) — neither of those hits this restriction.
 
+    # ---- 7b) wallpaper padding is equal on all 4 sides (fixed 60px, not a
+    # percentage of the card's own width/height — a real user screenshot
+    # showed visibly uneven top/bottom vs left/right margins on a tall card
+    # under the old percentage-based padding) ----
+    pad_info = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const frame = host.shadowRoot.querySelector('[data-snapcard-role="wallpaper-frame"]');
+          const card = frame ? frame.querySelector('[style*="width: 600px"]') : null;
+          if (!frame || !card) return null;
+          const f = frame.getBoundingClientRect();
+          const c = card.getBoundingClientRect();
+          return {
+            left: Math.round(c.left - f.left),
+            right: Math.round(f.right - c.right),
+            top: Math.round(c.top - f.top),
+            bottom: Math.round(f.bottom - c.bottom),
+          };
+        }"""
+    )
+    print("7b) wallpaper frame padding (l/r/t/b):", pad_info)
+    if not pad_info:
+        fails.append("wallpaper frame or card node not found for padding check")
+    else:
+        vals = (pad_info["left"], pad_info["right"], pad_info["top"], pad_info["bottom"])
+        if len(set(vals)) != 1:
+            fails.append(f"wallpaper padding not equal on all 4 sides: {pad_info}")
+        elif vals[0] != 60:
+            fails.append(f"wallpaper padding should be a fixed 60px, got {vals[0]}px")
+
+    # ---- 8) Copy is the primary (blue) button and comes first; Download is
+    # secondary (white/outlined) and comes second ----
+    button_order = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const shadow = host.shadowRoot;
+          const btns = Array.from(shadow.querySelectorAll('button')).filter((b) =>
+            ['复制图片', '下载 PNG', '关闭'].includes(b.textContent.trim())
+          );
+          return btns.map((b) => ({ text: b.textContent.trim(), bg: getComputedStyle(b).backgroundColor }));
+        }"""
+    )
+    print("8) action button order/style:", button_order)
+    labels = [b["text"] for b in button_order]
+    if labels != ["复制图片", "下载 PNG", "关闭"]:
+        fails.append(f"expected button order [复制图片, 下载 PNG, 关闭], got {labels}")
+    elif button_order[0]["bg"] != "rgb(29, 155, 240)":
+        fails.append(f"expected 复制图片 to be the primary (blue) button, got background {button_order[0]['bg']!r}")
+    elif button_order[1]["bg"] == "rgb(29, 155, 240)":
+        fails.append("expected 下载 PNG to be the secondary (non-blue) button now, but it's still blue")
+
+    # ---- 9) theme memory: switch back to 黑色 (steps 6/7 already proved
+    # clicking it changes the currently-open modal; step 7 switched to 壁纸
+    # afterwards, so re-select 黑色 here to make it the last-saved style),
+    # close the modal, reopen via the article button again, and confirm the
+    # new modal opens already on 黑色 (both the card's own background and the
+    # style selector's selected state) — proves the storage.sync round trip
+    # (saveStyle on click -> getSavedStyle on next open) actually works, not
+    # just that clicking changes the currently-open modal. ----
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+          btns.find((b) => b.textContent.trim() === '黑色').click();
+        }"""
+    )
+    page.wait_for_timeout(150)
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+          const btn = btns.find((b) => b.textContent.trim() === '关闭');
+          if (btn) btn.click();
+        }"""
+    )
+    page.wait_for_timeout(150)
+    still_open = page.evaluate("() => !!document.getElementById('snapcard-host')")
+    page.locator("article .snapcard-btn").click()
+    page.wait_for_timeout(200)
+    reopened = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          if (!host || !host.shadowRoot) return null;
+          const shadow = host.shadowRoot;
+          const cardNode = shadow.querySelector('[style*="width: 600px"]');
+          const bg = cardNode ? getComputedStyle(cardNode).backgroundColor : null;
+          const btns = Array.from(shadow.querySelectorAll('button'));
+          const darkBtn = btns.find((b) => b.textContent.trim() === '黑色');
+          const darkSelected = darkBtn ? getComputedStyle(darkBtn).backgroundColor === 'rgb(29, 155, 240)' : null;
+          return { bg, darkSelected };
+        }"""
+    )
+    print(f"9) modal closed while open={still_open}, reopened state: {reopened}")
+    if still_open:
+        fails.append("modal host was still present right after clicking 关闭")
+    if not reopened:
+        fails.append("modal did not reopen after clicking the article button again")
+    elif reopened.get("bg") != "rgb(0, 0, 0)":
+        fails.append(f"expected reopened card to remember 黑色 (black bg), got {reopened.get('bg')!r}")
+    elif not reopened.get("darkSelected"):
+        fails.append("expected '黑色' style button to show as selected on reopen")
+
 if console_errors:
     print("\nconsole errors captured:")
     for e in console_errors:
