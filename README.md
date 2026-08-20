@@ -11,12 +11,18 @@
 - 在每条推文的互动栏（回复/转发/点赞旁边）加一个小相机图标
 - 点一下生成卡片：头像、昵称、@handle、正文、配图、互动数据
 - 三种卡片样式：白色、黑色、壁纸（卡片居中放在背景图上，带柔和阴影），选择会被记住
-- 壁纸样式内置 7 张原创渐变背景，也支持上传自己的图片。喜欢 macOS 官方壁纸的用户可以自行去苹果官网下载，再用「上传背景」用上（插件本身不内置任何苹果版权素材）
-- 可选一键翻译成中文（谷歌翻译），生成原文+译文的双语卡片
+- 壁纸样式内置 7 张原创渐变背景，也支持上传自己的图片（最多 6 张）。喜欢 macOS 官方壁纸的用户可以自行去苹果官网下载，再用「上传背景」用上（插件本身不内置任何苹果版权素材）
+- 壁纸样式下卡片本体可以选白色或黑色，透明度 30%–100% 随意调——配上自己的背景图，每个人做出来的卡片都独一无二
+- 一键翻译（谷歌翻译），方向自动：外语推文翻成中文，中文推文翻成英文，卡片只显示译文
+- 图片完整显示：单图按原始比例全显，双图并排自动等高，三张以上可开「图片竖排」一张接一张排下来
+- 可隐藏互动数据和时间，只留内容本身
+- 界面语言自动跟随浏览器，弹窗右上角也能手动一键切换中／English
 - 支持下载 PNG，或直接复制图片到剪贴板
 - 可选在卡片右下角显示 SnapCard 署名水印，默认关闭，插件弹窗里可以打开
 - 数据全部从页面 DOM 读取，不需要登录、不需要 API Key、不做任何追踪
 - 零第三方依赖，无需构建
+
+![功能长图](docs/SnapCard功能长图.png)
 
 ## 安装
 
@@ -32,9 +38,9 @@
 
 1. 点推文上的相机图标。
 2. 弹出预览窗口，能看到生成的卡片。
-3. 选一个样式：白色／黑色／壁纸。壁纸样式下点「更多壁纸」展开全部内置背景，也可以上传自己的图片当背景（最多 6 张，可删除）。
-4. 如果推文正文以非中文为主，会出现「翻译」开关，打开后正文下方会加一段中文译文。
-5. 点「下载 PNG」保存卡片，或点「复制图片」把图片复制到剪贴板。
+3. 选一个样式：白色／黑色／壁纸。壁纸样式下点「更多壁纸」展开全部内置背景，也可以上传自己的图片当背景（最多 6 张，可删除）；还能给卡片本体选白色或黑色，并用滑块调卡片透明度。
+4. 勾选「翻译」，卡片正文换成译文：外语推文自动翻成中文，中文推文自动翻成英文。
+5. 点「复制图片」把图片复制到剪贴板，或点「下载 PNG」保存文件。
 
 被折叠（「显示更多」）的推文只能抓到可见部分，弹窗会提示先点开推文全文再生成。
 
@@ -73,13 +79,20 @@ Turn any post on X (Twitter) into a beautiful, shareable card — right from you
   If you'd rather use one of Apple's official macOS wallpapers, download it yourself from
   Apple's site and add it via "Upload background" — the extension itself ships no
   Apple-copyrighted assets
-- Optional one-click translation into Chinese (via Google Translate) for a bilingual card
+- In Wallpaper mode the card itself can be white or dark, with adjustable background
+  opacity (30–100%) — combined with your own wallpaper, every card you make is unique
+- One-click translation (via Google Translate), direction-aware: foreign-language posts
+  translate into Chinese, Chinese posts into English; the card shows only the translation
+- Images display in full: a single image at its natural ratio, two images side by side at
+  equal height, and 3+ images get an optional vertical-stack mode
+- Optionally hide the engagement stats and the timestamp
+- The UI follows your browser language automatically (English / Simplified Chinese),
+  with a manual 中/EN toggle in the modal's top corner
 - Download as PNG, or copy the rendered image straight to your clipboard
 - Optional "SnapCard" watermark in the corner of the card — off by default, can be
   turned on from the extension popup
 - Everything is read directly from the page DOM — no login, no API keys, no tracking
 - Zero third-party dependencies, no build step
-- The modal and popup UI are in Simplified Chinese (this extension's primary audience)
 
 ## Install
 
@@ -93,11 +106,12 @@ Turn any post on X (Twitter) into a beautiful, shareable card — right from you
 
 1. Click the camera icon on any tweet.
 2. A preview modal opens with the generated card.
-3. Pick a style — White, Dark, or Wallpaper. In Wallpaper mode you can upload
-   your own background image, or reset back to the built-in one.
-4. If the tweet is mostly non-Chinese, a translate toggle appears — turning it
-   on adds a Chinese translation below the original text.
-5. Download the card as a PNG, or copy the rendered image to your clipboard.
+3. Pick a style — White, Dark, or Wallpaper. In Wallpaper mode you can expand the
+   built-in background gallery or upload your own images (up to 6), choose a white or
+   dark card, and adjust the card's background opacity with a slider.
+4. Turn on the translate toggle to swap the card body for a translation — foreign-language
+   posts go to Chinese, Chinese posts go to English.
+5. Copy the rendered image to your clipboard, or download the card as a PNG.
 
 Tweets that are truncated ("Show more") are only partially captured — the
 modal will tell you to open the full tweet first.
