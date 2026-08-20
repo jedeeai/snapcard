@@ -60,6 +60,7 @@
 - 正文抽取：`[data-testid="tweetText"]`，emoji 是 `<img>` 要拼 alt
 - 折叠检测：`[data-testid="tweet-text-show-more-link"]`
 - React 拦截：注入按钮的 click 必须 window capture 阶段监听，只 stopPropagation 不 preventDefault（x-post-launcher 踩过）
+- 类名假设：`isForeignNode()` 认定 X 自有元素类名只有 `css-`/`r-` 前缀（或无 class），用来过滤第三方插件注入；X 若换类名方案，昵称/正文提取会变空（详见故障记录 2026-08-20）
 
 ## 发版规范
 
@@ -67,6 +68,7 @@
 
 - `0.8.19`：Style 切换 + 中文化 + 品牌栏首发
 - `0.8.20`：i18n（`chrome.i18n` 自动跟随浏览器语言，en 默认 + zh_CN）+ 内置壁纸从苹果官方壁纸换成 7 张自制渐变图（版权，见上方关键决策）
+- `0.8.20.2`：过滤第三方插件注入元素（`isForeignNode`），修「昵称里冒出已收录」bug（见故障记录）
 
 ## 复用来源（只抄不引用）
 
@@ -81,4 +83,5 @@
 - **同日 `toLargeImage()` 把 `data:` URI 也当 http(s) URL 处理**：`new URL(dataUri).searchParams.set('name','large')` 会在 base64 payload 后面拼一个 `?name=large`，把 data URI 直接拼坏（浏览器报 `ERR_INVALID_URL`）。修复：函数开头判断 `url.startsWith('data:')` 直接原样返回，不做任何改写。真实 x.com 环境下配图都是 `https://pbs.twimg.com/...` 不会触发，但 mock 测试用 `data:` URI 模拟图片时会立刻暴露。
 - **2026-08-19（追加验收）正文被拆成多行、emoji 独占一行还带缩进**：根因是 `textWithEmoji()` 把兄弟节点之间的「纯空白文本节点」（HTML 源码里标签之间的换行+缩进，比如 `</span>\n  <img ...>`）当成正文内容原样拼接进去了——真实 tweetText 一行文字中 span/img/span 之间如果 DOM 里存在这种格式化空白，字面的 `\n  ` 就会被当成真实换行和缩进拼进结果。之前只在 pretty-print 过的 mock.html 里暴露（X 真实 React 输出是压缩过的，理论上没有这类空白，但不能假设改版后依然如此）。修复：`textWithEmoji()` 遇到纯空白文本节点时不再原样拼接，折叠成一个空格（非空白内容的文本节点不受影响，保留其中真实的 `\n`）；`extractText`/`extractNameAndHandle` 之后再过一遍 `normalizeExtractedText()`，把空格/制表符折叠、把换行两侧多余空格清掉，但不动换行符本身——这样真实的多段落推文（换行是文本节点内字面 `\n`）依然保留，只有格式化空白被清理。验收用 `getClientRects().length` 在真实渲染后的卡片正文 div 上采样，断言等于推文应有的行数（这条 mock 是 1 行），比单纯比对提取出的字符串更硬——直接验证浏览器实际怎么排版，不是我自己猜的。
 - **同日 Wallpaper 模式预览里背景图不显示**：根因不在 content.js/render.js，而是 `tests/mock.html` 里 `chrome.runtime.getURL` 之前被我 mock 成返回一张 1x1 透明 data URI（是我为了让离线冒烟测试不发真实网络请求特意造的），杰哥的协调方截图验收时看到的「壁纸没铺上」其实是这张假图本身透明，不是产品代码的 bug。修复：mock 的 `getURL` 改成 `(path) => '../' + path`，指回 `tests/` 上一级的真实 `assets/bg-sequoia.webp`，实测背景 `<img>` `naturalWidth` 变成 2406（真实壁纸尺寸），预览截图也确认壁纸铺满、卡片带阴影居中。**顺带发现一个纯测试环境限制**：如果在这之后再跑一次完整 PNG 导出（`renderCardToPng`），`inlineImages()` 内部对背景图调用 `fetch(fileURL, {mode:'cors'})` 会被 Chrome 拒绝并打一条真实 console error（`URL scheme "file" is not supported`），这是 Chrome 对 `fetch()` 访问 `file://` 协议的硬限制，不是代码 bug——真实插件里背景图要么是 `data:`（用户自传壁纸，已经是内联的）要么是 `chrome-extension://`（内置默认壁纸，走 `web_accessible_resources` 声明过，`fetch()` 完全可用），都不会撞上这条限制。所以 smoke.py 里 Wallpaper 场景只验证「背景图在预览里真实解码成功」（`naturalWidth > 0`），没有让 Wallpaper 场景也跑一遍完整导出，避免把测试环境自身的协议限制误判成产品问题。
+- **2026-08-20（真实使用反馈）生成的卡片昵称后面多出「已收录」三个字**：根因是杰哥自己的另一个插件 x-track-badge 往推文 `User-Name` 里注入 `.xtb-badge`（内含 `<img alt="已收录">` 的 JA logo），SnapCard 的 `textWithEmoji()` 把一切 `<img>` 的 alt 当 emoji 文字拼接，于是注入徽章的 alt 被拼进了昵称；未收录账号的「+」徽章（`textContent` 是 `+`）同理会漏进来。修复：新增 `isForeignNode(el)` —— X 自己的 React 输出类名只有 `css-`/`r-` 前缀（或没有 class），元素只要挂了这套之外的任何类名就判定为第三方注入，`textWithEmoji` 递归、`extractNameAndHandle` 的直接子元素遍历、`findHandleNode` 三处统一跳过，顺带把用户装的其它注入型插件（翻译器等）也挡掉。**注意这也进了「X 改版高危点」性质的假设**：如果 X 未来改掉 css-/r- 类名方案，X 自己的元素会被误判为外来元素、昵称/正文提取直接变空——排查「卡片文字突然全空」时先查这里。回归测试：mock.html 第一条推文的 User-Name 里固定放了一个 `.xtb-badge`（alt=已收录），smoke.py 断言 shadow DOM 全文不含「已收录」；撤掉修复反证过，断言确实会红。
 - **2026-08-19（真实用户反馈）Wallpaper 四边 padding 不等，改固定 60px 后仍然不等**：一开始以为是「百分比 vs 固定值」的问题，改成 `WALLPAPER_PAD=60` 固定值后用新加的 smoke 断言一测，左右还是只有 20px（上下正常 60px）。真根因是 `buildWallpaperFrame` 返回的 frame 节点被塞进 `previewWrap`（`display:flex`）之后，没有显式设 `flexShrink:'0'`，默认 `flex-shrink:1` 会在横向（flex 主轴）把 720px 宽的 frame 压缩到跟 modal 面板差不多宽，纵向（非主轴）不受影响，压缩只发生在左右——这才是「上下边距明显大于左右」的真正机制，跟 padding 是百分比还是固定值无关，只是百分比值更大（原来 90px）让压缩量看起来更夸张。**教训：任何一个子元素被塞进 flex 容器、又要求它按精确像素渲染（不能被主轴挤压）时，必须显式 `flexShrink:0`，不能假设「反正我设了 width 就一定按这个宽度画」。** 修复：`wrapper` 加 `flexShrink:'0'`；smoke.py 新增 7b 断言直接量 frame/card 两个矩形的四边差值，四边必须相等且等于 60，这类「肉眼看着对，测出来才发现只有部分方向生效」的偏差以后能被自动挡住。

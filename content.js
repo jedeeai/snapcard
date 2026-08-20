@@ -265,6 +265,19 @@
   // some other markup (or a hand-written test fixture) from having it. If we
   // included it literally, an emoji between two spans would land on its own
   // indented line. So it's folded down to a single inline space instead.
+  // Other extensions inject their own elements into X's tweet DOM (e.g. a
+  // "collected" badge whose logo <img alt> would otherwise be read as emoji
+  // text and spliced into the display name). X's own React output only ever
+  // carries generated class names ("css-…" / "r-…") or no class at all, so
+  // any element wearing a class outside that scheme is foreign — not tweet
+  // content — and text extraction skips it wholesale.
+  function isForeignNode(el) {
+    for (const cls of el.classList) {
+      if (!/^(css-|r-)/.test(cls)) return true;
+    }
+    return false;
+  }
+
   function textWithEmoji(node) {
     let out = "";
     node.childNodes.forEach((child) => {
@@ -272,6 +285,7 @@
         const raw = child.nodeValue;
         out += /^\s*$/.test(raw) ? (raw.length ? " " : "") : raw;
       } else if (child.nodeType === 1) {
+        if (isForeignNode(child)) return;
         if (child.tagName === "IMG") out += child.getAttribute("alt") || "";
         else if (child.tagName === "BR") out += "\n";
         else out += textWithEmoji(child);
@@ -315,7 +329,7 @@
 
   // Find the leaf element whose text starts with "@" — that's the handle.
   function findHandleNode(node) {
-    if (!node || node.nodeType !== 1) return null;
+    if (!node || node.nodeType !== 1 || isForeignNode(node)) return null;
     const text = (node.textContent || "").trim();
     if (text.startsWith("@") && !node.querySelector("span, a")) return node;
     for (const child of node.children) {
@@ -336,6 +350,7 @@
     let displayName = "";
     for (const child of container.children) {
       if (handleNode && child.contains(handleNode)) continue;
+      if (isForeignNode(child)) continue;
       const text = normalizeExtractedText(textWithEmoji(child));
       if (text) {
         displayName = text;

@@ -100,6 +100,9 @@
 
 <!-- One tweet, structured like real x.com DOM as of 2026-08:
      - User-Name with an emoji <img alt> spliced into the display name and a blue-check svg
+     - a third-party injected badge (mirrors x-track-badge's .xtb-badge with
+       <img alt="已收录">) sitting right after the name link — its own class
+       (not css-/r- prefixed) marks it foreign, and extraction must skip it
      - tweetText with an emoji <img alt> in the body
      - role=group aria-label carrying the four interaction stats
      - one tweetPhoto image (1x1 transparent data URI, avoids any network fetch)
@@ -111,6 +114,7 @@
         <a href="/jack" role="link">
           <span>Jack<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7" alt="🚀" draggable="false"></span>
         </a>
+        <span class="xtb-badge xtb-in"><img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7" alt="已收录"></span>
       </div>
       <span><svg aria-label="Verified account" width="18" height="18" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg></span>
     </div>

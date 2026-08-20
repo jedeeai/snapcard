@@ -100,7 +100,12 @@ with sync_playwright() as p:
             fails.append(f"expected display name 'Jack' in card, shadow text was: {shadow_text[:200]!r}")
         if "@jack" not in shadow_text:
             fails.append(f"expected handle '@jack' in card, shadow text was: {shadow_text[:200]!r}")
-        print("   name/handle found in shadow text: OK")
+        # The mock's User-Name carries a third-party injected badge
+        # (.xtb-badge with <img alt="已收录">, mirroring x-track-badge).
+        # Its alt text must NOT leak into the card as if it were emoji text.
+        if "已收录" in shadow_text:
+            fails.append(f"injected .xtb-badge alt text '已收录' leaked into the card, shadow text was: {shadow_text[:300]!r}")
+        print("   name/handle found in shadow text, injected badge filtered: OK")
 
     # ---- 2b) body text renders as exactly 1 visual line (no bogus emoji-
     # induced line break / indentation from whitespace-only text nodes in the
