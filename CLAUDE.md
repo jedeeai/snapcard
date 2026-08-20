@@ -66,6 +66,12 @@
   - **rebuildCard 变 async**：等图片期间不清空 previewWrap（首次保留 spinner、切换保留旧卡片，不闪白），`rebuildSeq` 单调计数丢弃过期重建（快速连点样式按钮时旧的异步结果不许覆盖新的）。
   - 测试：tweet-2col 的图换成 300×600/600×600 两张不同 natural 比例的 SVG data URI，第 14 项从「镜像时间线比例」改为断言「natural 比例＋等高」；新增 #tweet-3pic（0.5/1.0/1.333 三比例）和第 20 项（默认 kind=3 → 勾竖排变 stack 且三格 536 宽 natural 比例 → 取消还原）；新增 #tweet-long＋smoke 里 `page.route` 人工延迟 400ms 的 http SVG 图，第 19 项断言长卡预览贴合视口＋壁纸框=卡片+120（这条是下面故障记录那个 bug 的回归锁）。
 
+- **2026-08-20（v0.8.20.5）三项真实使用反馈优化**：
+  1. **壁纸模式卡片独立外观**：外层 Style 选「壁纸」后，多一行「卡片：白/黑 ＋ 透明度滑块」（只在壁纸模式显示，跟缩略图行同一个 `updateBgControlsVisibility` 控制）。卡片主题存 `storage.sync` key `wallpaperCardTheme`（"white"/"dark" 默认 white），透明度存 `wallpaperCardOpacity`（整数 30–100 默认 100，低于 30 文字压不住花背景所以下限 30）。**透明度是推文卡片自己的底色透明度，不是背景图的**——实现＝`buildExportEl` 壁纸分支在 buildCard 之后把 `card.style.backgroundColor` 改成对应 rgba，文字/边框/配图全不透明，壁纸从卡片底下透出来；100% 时不动任何样式，跟旧版逐像素一致。**产品动机（杰哥原话）：用户上传自己的背景图＋卡片半透明＝每个人产出的图都不一样，发推查重时天然去重。** 滑块 input 事件只刷百分比文字，change（松手）才 rebuildCard，避免拖动过程逐像素重建。注意 modal 里现在有两组「白色/黑色」按钮（外层 Style 一组、卡片颜色一组），测试用 `data-snapcard-role="card-theme-white/dark"` 区分，按文本 find 会命中 DOM 里靠前的 Style 按钮。
+  2. **翻译开关恒显示＋方向自适应**：删掉 `shouldShowTranslate`（旧规则「推文主语言=UI语言就藏按钮」，把「中文界面看中文推文想翻成英文」这个真实场景堵死了）。`translateTargetLang(text)` 改为按推文定向：主要是中文→`en`，否则→UI 中文时 `zh-CN`、UI 英文时 `en`。英文界面点英文推文=谷歌原样返回，无意义但无害，不为这个边缘加复杂度。
+  3. **中/EN 按钮从 panel 绝对定位改成独立顶行**：原来 `position:absolute` 钉在 panel 右上角，会压在预览图上。现在 `headerRow`（flex 右对齐）`panel.insertBefore(..., panel.firstChild)`，预览从它下面开始，物理上不可能重叠。smoke 第 21 项末尾有矩形不相交断言锁住。
+  - 测试：第 21 项（翻译恒显示＋两个方向断言 target，靠 mock 的 `__sentMessages` 记录）＋第 22 项（壁纸卡片控件可见性、黑色 100%＝`rgb(0,0,0)`、60%＝`rgba(0,0,0,0.6)`，读的是 exportEl 里卡片的 inline style，detached 节点别用 getComputedStyle 的老规矩）。
+
 ## X 改版高危点（改版先查这里）
 
 - 按钮注入锚点：`article` 内 `[role="group"]` 互动栏
@@ -84,6 +90,7 @@
 - `0.8.20.2`：过滤第三方插件注入元素（`isForeignNode`），修「昵称里冒出已收录」bug（见故障记录）
 - `0.8.20.3`：复制按钮剪贴板手势时效修复＋modal 右上角中/EN 界面语言手动切换＋翻译后只显示译文（见上方关键决策）
 - `0.8.20.4`：修长推文/慢图预览与放大显示不全（decode 后再测量，见故障记录）＋媒体布局改版：单图全显、双图等高全显、3+ 图「图片竖排」开关（见上方关键决策）
+- `0.8.20.5`：壁纸模式卡片白/黑＋透明度（去重用途）＋翻译开关恒显示方向自适应＋中/EN 按钮挪独立顶行不再压图（见上方关键决策）
 
 ## 复用来源（只抄不引用）
 

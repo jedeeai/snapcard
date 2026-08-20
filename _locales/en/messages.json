@@ -36,6 +36,8 @@
   "scrollHintText": { "message": "Copy button is below ↓" },
   "langToggleTitle": { "message": "Switch UI language" },
   "stackImagesLabel": { "message": "Stack images" },
+  "cardColorLabel": { "message": "Card" },
+  "opacityLabel": { "message": "Opacity" },
   "watermarkLabel": { "message": "Show the SnapCard watermark on cards" },
   "brandBarText": { "message": "Made by xbangdan.com" },
   "brandLogoAlt": { "message": "xbangdan" }

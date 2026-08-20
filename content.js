@@ -39,6 +39,8 @@
     hideStatsLabel: "Hide stats",
     hideTimeLabel: "Hide date",
     stackImagesLabel: "Stack images",
+    cardColorLabel: "Card",
+    opacityLabel: "Opacity",
     translateLabel: "Translate",
     translatingText: "Translating…",
     translateFailedText: "Couldn't reach the translation service",
@@ -173,10 +175,14 @@
     }
   }
 
-  // Which language the "翻译/Translate" button should translate *into* —
-  // Chinese UI keeps today's behavior (translate into zh-CN), English UI
-  // translates into English. Passed to background.js's translate message.
-  function translateTargetLang() {
+  // Which language the "翻译/Translate" button translates *into*: a mostly-
+  // Chinese tweet goes to English; anything else goes to Chinese under a
+  // Chinese UI and to English otherwise. The toggle itself is always shown
+  // (2026-08-20 user decision — a Chinese-UI user reading a Chinese tweet
+  // still wants "translate to English"); the same-language edge case just
+  // round-trips through Google Translate, harmless.
+  function translateTargetLang(text) {
+    if (isPrimarilyChinese(text)) return "en";
     return uiLanguageIsChinese() ? "zh-CN" : "en";
   }
 
@@ -658,6 +664,41 @@
     }
   }
 
+  // Wallpaper-mode card appearance: which palette the card itself uses
+  // ("white"/"dark" — independent of the outer style selector) and how
+  // opaque its background is (integer percent, 30–100; below 30 the text
+  // gets hard to read against busy wallpapers). Both remembered.
+  const VALID_CARD_THEMES = ["white", "dark"];
+
+  function clampCardOpacity(v) {
+    const n = Math.round(Number(v));
+    if (isNaN(n)) return 100;
+    return Math.min(100, Math.max(30, n));
+  }
+
+  function getWallpaperCardSettings() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.sync.get({ wallpaperCardTheme: "white", wallpaperCardOpacity: 100 }, (res) =>
+          resolve({
+            theme: VALID_CARD_THEMES.includes(res.wallpaperCardTheme) ? res.wallpaperCardTheme : "white",
+            opacity: clampCardOpacity(res.wallpaperCardOpacity),
+          })
+        );
+      } catch (_) {
+        resolve({ theme: "white", opacity: 100 });
+      }
+    });
+  }
+
+  function saveWallpaperCardSettings(theme, opacity) {
+    try {
+      chrome.storage.sync.set({ wallpaperCardTheme: theme, wallpaperCardOpacity: opacity });
+    } catch (_) {
+      // not fatal — just won't be remembered next time
+    }
+  }
+
   // ---------- wallpaper background picker ----------
   // 7 built-in original gradient photos (bundled in assets/, self-made —
   // replaced the earlier Apple macOS wallpapers so the extension ships no
@@ -804,13 +845,6 @@
     return zh / stripped.length >= 0.1;
   }
 
-  // Show the Translate toggle whenever the tweet's primary language differs
-  // from the UI's language — Chinese UI + non-Chinese tweet (today's
-  // behavior, unchanged) or English UI + a tweet that's mostly Chinese.
-  function shouldShowTranslate(text) {
-    return uiLanguageIsChinese() ? !isPrimarilyChinese(text) : isPrimarilyChinese(text);
-  }
-
   function buildFilename(handle) {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, "0");
@@ -855,7 +889,7 @@
     if (!shell.host.isConnected) return; // closed before we got this far
 
     const data = extractTweetData(article);
-    const [watermark, style, customBgs, hideStats, hideTime, savedBgId, uiLang, stackImages] = await Promise.all([
+    const [watermark, style, customBgs, hideStats, hideTime, savedBgId, uiLang, stackImages, wallpaperCard] = await Promise.all([
       getWatermarkSetting(),
       getSavedStyle(),
       getCustomBackgrounds(),
@@ -864,6 +898,7 @@
       getSavedBackgroundId(),
       getUiLangSetting(),
       getStackImagesSetting(),
+      getWallpaperCardSettings(),
     ]);
     if (!shell.host.isConnected) return; // closed while settings were loading
     await applyUiLang(uiLang); // must resolve before finishModal renders any t() text
@@ -876,6 +911,7 @@
       hideStats,
       hideTime,
       stackImages,
+      wallpaperCard,
       bgId: sanitizeBgId(savedBgId, customBgs),
       article, // kept so the 中/EN toggle can rebuild this same modal from scratch
     });
@@ -977,23 +1013,22 @@
   function finishModal(shell, data, options) {
     const { host, shadow, panel, previewWrap } = shell;
 
-    // ----- UI language toggle (panel top-right) -----
+    // ----- UI language toggle (its own slim header row, above the preview —
+    // NOT overlaid on it: an absolutely-positioned corner button used to sit
+    // on top of the card image) -----
     // The button shows the language it switches *to*: "EN" while the UI is
     // Chinese, "中" while it's English. Clicking stores the explicit choice
     // (storage.sync `uiLang`) and rebuilds the modal through the exact same
     // path as the original open, so every label re-renders in the new
     // language — no in-place retranslation of dozens of nodes.
-    panel.style.position = "relative";
+    const headerRow = document.createElement("div");
+    Object.assign(headerRow.style, { display: "flex", justifyContent: "flex-end", marginBottom: "8px" });
     const langBtn = document.createElement("button");
     langBtn.type = "button";
     langBtn.dataset.snapcardRole = "lang-toggle";
     langBtn.textContent = uiLanguageIsChinese() ? "EN" : "中";
     langBtn.title = t("langToggleTitle");
     Object.assign(langBtn.style, {
-      position: "absolute",
-      top: "12px",
-      right: "12px",
-      zIndex: "1",
       border: "1px solid #cfd9de",
       background: "#ffffff",
       color: "#0f1419",
@@ -1008,7 +1043,8 @@
       closeModal(host);
       if (options.article) handleGenerateClick(options.article);
     });
-    panel.appendChild(langBtn);
+    headerRow.appendChild(langBtn);
+    panel.insertBefore(headerRow, panel.firstChild);
 
     if (data.truncated) {
       const notice = document.createElement("div");
@@ -1032,6 +1068,8 @@
       hideStats: !!options.hideStats,
       hideTime: !!options.hideTime,
       stackImages: !!options.stackImages,
+      wallpaperCardTheme: (options.wallpaperCard && options.wallpaperCard.theme) || "white",
+      wallpaperCardOpacity: (options.wallpaperCard && options.wallpaperCard.opacity) || 100,
       bgId: options.bgId || "aurora",
       exportEl: null, // the node render.js should actually export (card, or card+wallpaper frame)
     };
@@ -1048,7 +1086,7 @@
     // never gets a transform/scale of its own; see renderScaledPreview below
     // for why that separation matters.
     async function buildExportEl(cardData, cardOptions) {
-      const theme = state.style === "wallpaper" ? "white" : state.style;
+      const theme = state.style === "wallpaper" ? state.wallpaperCardTheme : state.style;
       const card = window.SnapCard.buildCard(cardData, Object.assign({ theme }, cardOptions));
       // Both one-time measurements downstream (the wallpaper frame's
       // getBoundingClientRect here, the preview-scale probe in
@@ -1062,6 +1100,15 @@
       // anything measures the card.
       window.SnapCard.finalizeMediaLayout(card);
       if (state.style !== "wallpaper") return card;
+
+      // Translucent card over the wallpaper: only the card's own background
+      // gains alpha — text, borders and images keep full contrast. 100% is
+      // left untouched so the default renders exactly as before.
+      if (state.wallpaperCardOpacity < 100) {
+        const alpha = state.wallpaperCardOpacity / 100;
+        card.style.backgroundColor =
+          state.wallpaperCardTheme === "dark" ? `rgba(0, 0, 0, ${alpha})` : `rgba(255, 255, 255, ${alpha})`;
+      }
 
       const stage = document.createElement("div");
       Object.assign(stage.style, { position: "fixed", left: "-9999px", top: "0" });
@@ -1234,8 +1281,89 @@
 
     const bgControls = document.createElement("div");
     Object.assign(bgControls.style, { display: "flex", alignItems: "center", gap: "8px" });
+
+    // ----- wallpaper card appearance row (Wallpaper mode only) -----
+    // The card inside the wallpaper frame gets its own white/dark choice
+    // (independent of the outer style selector — that one picks the *frame*
+    // mode) plus a background-opacity slider so the wallpaper can shine
+    // through a translucent card.
+    const cardControls = document.createElement("div");
+    cardControls.dataset.snapcardRole = "wallpaper-card-controls";
+    Object.assign(cardControls.style, { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" });
+
+    const cardColorText = document.createElement("span");
+    Object.assign(cardColorText.style, { fontSize: "12px", color: "#536471" });
+    cardColorText.textContent = t("cardColorLabel");
+    cardControls.appendChild(cardColorText);
+
+    const cardThemeButtons = {};
+    function paintCardThemeButtons() {
+      VALID_CARD_THEMES.forEach((key) => {
+        const active = state.wallpaperCardTheme === key;
+        Object.assign(cardThemeButtons[key].style, {
+          background: active ? "#1d9bf0" : "#eff3f4",
+          color: active ? "#ffffff" : "#0f1419",
+        });
+      });
+    }
+    VALID_CARD_THEMES.forEach((key) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.dataset.snapcardRole = `card-theme-${key}`;
+      btn.textContent = key === "white" ? t("styleWhite") : t("styleDark");
+      Object.assign(btn.style, {
+        border: "none",
+        borderRadius: "9999px",
+        padding: "4px 12px",
+        fontSize: "12px",
+        fontWeight: "600",
+        cursor: "pointer",
+      });
+      btn.addEventListener("click", () => {
+        if (state.wallpaperCardTheme === key) return;
+        state.wallpaperCardTheme = key;
+        saveWallpaperCardSettings(state.wallpaperCardTheme, state.wallpaperCardOpacity);
+        paintCardThemeButtons();
+        rebuildCard();
+      });
+      cardThemeButtons[key] = btn;
+      cardControls.appendChild(btn);
+    });
+    paintCardThemeButtons();
+
+    const opacityText = document.createElement("span");
+    Object.assign(opacityText.style, { fontSize: "12px", color: "#536471", marginLeft: "8px" });
+    opacityText.textContent = t("opacityLabel");
+    cardControls.appendChild(opacityText);
+
+    const opacitySlider = document.createElement("input");
+    opacitySlider.type = "range";
+    opacitySlider.min = "30";
+    opacitySlider.max = "100";
+    opacitySlider.step = "5";
+    opacitySlider.value = String(state.wallpaperCardOpacity);
+    opacitySlider.dataset.snapcardRole = "card-opacity-slider";
+    Object.assign(opacitySlider.style, { width: "110px", cursor: "pointer" });
+    const opacityValue = document.createElement("span");
+    Object.assign(opacityValue.style, { fontSize: "12px", color: "#0f1419", minWidth: "38px" });
+    opacityValue.textContent = `${state.wallpaperCardOpacity}%`;
+    // Live percent label while dragging; the (expensive) card rebuild only
+    // fires on release ("change"), not per drag pixel.
+    opacitySlider.addEventListener("input", () => {
+      opacityValue.textContent = `${clampCardOpacity(opacitySlider.value)}%`;
+    });
+    opacitySlider.addEventListener("change", () => {
+      state.wallpaperCardOpacity = clampCardOpacity(opacitySlider.value);
+      saveWallpaperCardSettings(state.wallpaperCardTheme, state.wallpaperCardOpacity);
+      rebuildCard();
+    });
+    cardControls.appendChild(opacitySlider);
+    cardControls.appendChild(opacityValue);
+
     function updateBgControlsVisibility() {
-      bgControls.style.display = state.style === "wallpaper" ? "flex" : "none";
+      const display = state.style === "wallpaper" ? "flex" : "none";
+      bgControls.style.display = display;
+      cardControls.style.display = display;
     }
 
     VALID_STYLES.forEach((key) => {
@@ -1502,6 +1630,7 @@
     renderBgThumbnails();
     updateBgControlsVisibility();
     styleRow.appendChild(bgControls);
+    styleRow.appendChild(cardControls);
 
     panel.appendChild(styleRow);
 
@@ -1599,7 +1728,9 @@
     const statusText = document.createElement("span");
     Object.assign(statusText.style, { fontSize: "12px", color: "#536471" });
 
-    if (shouldShowTranslate(data.text)) {
+    // Always offered — the translate direction adapts to the tweet instead
+    // (see translateTargetLang).
+    {
       const label = document.createElement("label");
       Object.assign(label.style, { display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: "#0f1419", cursor: "pointer" });
       const checkbox = document.createElement("input");
@@ -1618,7 +1749,7 @@
             const res = await chrome.runtime.sendMessage({
               type: "translate",
               text: data.text,
-              target: translateTargetLang(),
+              target: translateTargetLang(data.text),
             });
             if (res && res.ok) {
               state.translatedText = res.text;

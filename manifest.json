@@ -3,7 +3,7 @@
   "name": "SnapCard",
   "default_locale": "en",
   "description": "__MSG_extDescription__",
-  "version": "0.8.20.4",
+  "version": "0.8.20.5",
   "homepage_url": "https://xbangdan.com",
   "icons": {
     "16": "icons/icon16.png",

@@ -1271,6 +1271,131 @@ with sync_playwright() as p:
     if not grid_back or grid_back["kind"] != "3":
         fails.append(f"unchecking 图片竖排 should restore the X-style grid, got {grid_back}")
 
+    # ---- 21) translate is ALWAYS offered and direction-aware: the still-open
+    # #tweet-3pic modal has an English tweet under a Chinese UI → target
+    # zh-CN; #tweet-long's tweet is Chinese under the same Chinese UI — the
+    # old rule hid the toggle entirely there, the new rule must offer it and
+    # target English. Also: the 中/EN toggle now lives in its own header row
+    # and must not overlap the preview area (it used to sit on the image). ----
+    def click_translate_and_get_target():
+        page.evaluate(
+            """() => {
+              const host = document.getElementById('snapcard-host');
+              const labels = Array.from(host.shadowRoot.querySelectorAll('label'));
+              const label = labels.find((l) => l.textContent.trim() === '翻译');
+              const cb = label && label.querySelector('input[type="checkbox"]');
+              if (cb) cb.click();
+            }"""
+        )
+        page.wait_for_timeout(300)
+        return page.evaluate(
+            """() => {
+              const msgs = window.__sentMessages.filter((m) => m && m.type === 'translate');
+              return msgs.length ? msgs[msgs.length - 1].target : null;
+            }"""
+        )
+
+    target_en_tweet = click_translate_and_get_target()
+    print("21) translate target for English tweet under Chinese UI:", target_en_tweet)
+    if target_en_tweet != "zh-CN":
+        fails.append(f"English tweet under Chinese UI should translate into zh-CN, got {target_en_tweet!r}")
+
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+          const btn = btns.find((b) => ['关闭', 'Close'].includes(b.textContent.trim()));
+          if (btn) btn.click();
+        }"""
+    )
+    page.wait_for_timeout(150)
+    page.locator('#tweet-long .snapcard-btn').click()
+    page.wait_for_timeout(2200)  # slow image again
+
+    target_zh_tweet = click_translate_and_get_target()
+    print("    translate target for Chinese tweet under Chinese UI:", target_zh_tweet)
+    if target_zh_tweet != "en":
+        fails.append(f"Chinese tweet under Chinese UI should offer translate INTO ENGLISH, got {target_zh_tweet!r}")
+
+    overlap = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const toggle = host.shadowRoot.querySelector('[data-snapcard-role="lang-toggle"]');
+          const viewport = host.shadowRoot.querySelector('[data-snapcard-role="preview-viewport"]');
+          if (!toggle || !viewport) return null;
+          const t = toggle.getBoundingClientRect();
+          const v = viewport.getBoundingClientRect();
+          const intersects = t.right > v.left && t.left < v.right && t.bottom > v.top && t.top < v.bottom;
+          return { intersects, toggleBottom: t.bottom, viewportTop: v.top };
+        }"""
+    )
+    print("    lang toggle vs preview overlap:", overlap)
+    if not overlap or overlap["intersects"]:
+        fails.append(f"the 中/EN toggle must not overlap the preview area anymore, got {overlap}")
+
+    # ---- 22) wallpaper-mode card appearance: the card inside the frame gets
+    # its own 白/黑 choice plus a background-opacity slider (user upload +
+    # translucent card = per-user-unique output). The controls row only shows
+    # in Wallpaper mode; opacity 100 keeps the plain palette color; dark at
+    # 60% must render rgba(0,0,0,0.6) on the card, with the frame unaffected. ----
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+          const btn = btns.find((b) => b.textContent.trim() === '壁纸');
+          if (btn) btn.click();
+        }"""
+    )
+    page.wait_for_timeout(1200)
+    controls_visible = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const row = host.shadowRoot.querySelector('[data-snapcard-role="wallpaper-card-controls"]');
+          return row ? row.style.display : null;
+        }"""
+    )
+    print("22) wallpaper card controls display:", controls_visible)
+    if controls_visible != "flex":
+        fails.append(f"wallpaper card controls should be visible (display:flex) in Wallpaper mode, got {controls_visible!r}")
+
+    def wallpaper_card_bg():
+        return page.evaluate(
+            """() => {
+              const host = document.getElementById('snapcard-host');
+              const exportEl = host.__snapcardExportEl;
+              if (!exportEl || exportEl.dataset.snapcardRole !== 'wallpaper-frame') return null;
+              const centerLayer = exportEl.querySelector('[data-snapcard-role="wallpaper-bg"]').nextElementSibling;
+              return centerLayer.firstElementChild.style.backgroundColor;
+            }"""
+        )
+
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btn = host.shadowRoot.querySelector('[data-snapcard-role="card-theme-dark"]');
+          if (btn) btn.click();
+        }"""
+    )
+    page.wait_for_timeout(800)
+    dark_full = wallpaper_card_bg()
+    print("    card bg after 黑 at 100%:", dark_full)
+    if dark_full != "rgb(0, 0, 0)":
+        fails.append(f"wallpaper card in dark at 100% opacity should be rgb(0, 0, 0), got {dark_full!r}")
+
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const slider = host.shadowRoot.querySelector('[data-snapcard-role="card-opacity-slider"]');
+          slider.value = '60';
+          slider.dispatchEvent(new Event('change'));
+        }"""
+    )
+    page.wait_for_timeout(800)
+    dark_translucent = wallpaper_card_bg()
+    print("    card bg after opacity 60%:", dark_translucent)
+    if dark_translucent != "rgba(0, 0, 0, 0.6)":
+        fails.append(f"wallpaper card in dark at 60% opacity should be rgba(0, 0, 0, 0.6), got {dark_translucent!r}")
+
 if console_errors:
     print("\nconsole errors captured:")
     for e in console_errors:
