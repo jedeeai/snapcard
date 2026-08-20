@@ -179,11 +179,15 @@
     <span>Two tall screenshots, side by side.</span>
   </div>
 
+  <!-- Natural sizes 300x600 (ratio 0.5) and 600x600 (ratio 1.0) — the card's
+       2-up layout must show BOTH in full at equal height, splitting the
+       column widths proportionally to those natural ratios (the 254x460
+       timeline container ratio is only the pre-load placeholder). -->
   <div data-testid="tweetPhoto" style="width:254px;height:460px;display:block;">
-    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7" style="width:100%;height:100%;">
+    <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMDAiIGhlaWdodD0iNjAwIj48cmVjdCB3aWR0aD0iMzAwIiBoZWlnaHQ9IjYwMCIgZmlsbD0iIzQ0NzdhYSIvPjwvc3ZnPg==" style="width:100%;height:100%;">
   </div>
   <div data-testid="tweetPhoto" style="width:254px;height:460px;display:block;">
-    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7" style="width:100%;height:100%;">
+    <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2MDAiIGhlaWdodD0iNjAwIj48cmVjdCB3aWR0aD0iNjAwIiBoZWlnaHQ9IjYwMCIgZmlsbD0iI2RkYWEzMyIvPjwvc3ZnPg==" style="width:100%;height:100%;">
   </div>
 
   <time datetime="2026-08-19T01:41:00.000Z">9:41 AM</time>
@@ -193,6 +197,90 @@
     <div role="button" data-testid="retweet">5</div>
     <div role="button" data-testid="like">40</div>
     <div role="button" data-testid="analytics">900</div>
+  </div>
+</article>
+
+<!-- Tweet with three photos of three different natural ratios (0.5 / 1.0 /
+     1.333) for the opt-in "stack images" mode: default stays the X-style
+     3-tile grid; with the 图片竖排 checkbox on, all three render as a full-
+     width vertical stack, each at its own natural ratio. -->
+<article data-testid="tweet" id="tweet-3pic">
+  <div data-testid="User-Name">
+    <div>
+      <div dir="ltr">
+        <a href="/jack" role="link"><span>Jack</span></a>
+      </div>
+    </div>
+    <div>
+      <div dir="ltr"><span>@jack</span></div>
+    </div>
+  </div>
+
+  <div data-testid="tweetText">
+    <span>Three photos, three shapes.</span>
+  </div>
+
+  <div data-testid="tweetPhoto" style="width:200px;height:300px;display:block;">
+    <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMDAiIGhlaWdodD0iNjAwIj48cmVjdCB3aWR0aD0iMzAwIiBoZWlnaHQ9IjYwMCIgZmlsbD0iIzQ0NzdhYSIvPjwvc3ZnPg==" style="width:100%;height:100%;">
+  </div>
+  <div data-testid="tweetPhoto" style="width:200px;height:150px;display:block;">
+    <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2MDAiIGhlaWdodD0iNjAwIj48cmVjdCB3aWR0aD0iNjAwIiBoZWlnaHQ9IjYwMCIgZmlsbD0iI2RkYWEzMyIvPjwvc3ZnPg==" style="width:100%;height:100%;">
+  </div>
+  <div data-testid="tweetPhoto" style="width:200px;height:150px;display:block;">
+    <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MDAiIGhlaWdodD0iMzAwIj48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0iIzY2Y2NlZSIvPjwvc3ZnPg==" style="width:100%;height:100%;">
+  </div>
+
+  <time datetime="2026-08-19T12:00:00.000Z">8:00 PM</time>
+
+  <div role="group" aria-label="1 replies, 1 reposts, 5 likes, 100 views">
+    <div role="button" data-testid="reply">1</div>
+    <div role="button" data-testid="retweet">1</div>
+    <div role="button" data-testid="like">5</div>
+    <div role="button" data-testid="analytics">100</div>
+  </div>
+</article>
+
+<!-- Third tweet, dedicated to the "long tweet + slow-loading image gets
+     clipped in preview and zoom" regression: multi-paragraph body text plus
+     a single photo whose container is 0px tall on the timeline (so
+     extractImages captures NO display ratio — aspectRatio null — and the
+     card's single-image tile has to rely on the image's own natural size)
+     and whose src is an http URL that smoke.py serves through page.route()
+     with an artificial delay. Before the fix, the wallpaper frame and the
+     preview-scale probe both measured the card while this image was still
+     0px tall, so the finished card overflowed everything sized off those
+     measurements. -->
+<article data-testid="tweet" id="tweet-long">
+  <div data-testid="User-Name">
+    <div>
+      <div dir="ltr">
+        <a href="/jack" role="link"><span>Jack</span></a>
+      </div>
+    </div>
+    <div>
+      <div dir="ltr"><span>@jack</span></div>
+    </div>
+  </div>
+
+  <div data-testid="tweetText">
+    <span>「X数据榜单」做了一个大改版，这次把首页、账号榜、推文榜全部重写了一遍，还加了不少新功能，欢迎大家来体验。
+
+目前还有一些小问题没优化好，样式上也有几个细节要调，遇到显示不对的地方不用担心，都在修。
+
+先发出来给大家尝尝鲜吧，也顺便帮我找找 bug，有问题直接在评论区告诉我，我看到都会回。</span>
+  </div>
+
+  <div data-testid="tweetPhoto" style="width:300px;height:0;overflow:hidden;display:block;">
+    <img src="http://snapcard.mock/tall.svg">
+  </div>
+
+  <time datetime="2026-08-19T11:16:00.000Z">7:16 PM</time>
+
+  <div role="group" aria-label="3 replies, 1 reposts, 20 likes, 500 views">
+    <div role="button" data-testid="reply">3</div>
+    <div role="button" data-testid="retweet">1</div>
+    <div role="button" data-testid="like">20</div>
+    <div role="button" data-testid="analytics">500</div>
   </div>
 </article>
 

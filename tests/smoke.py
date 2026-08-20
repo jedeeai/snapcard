@@ -8,7 +8,9 @@
 #   3) clicking "下载 PNG" runs the full render pipeline without a JS error
 import json
 import os
+import re
 import sys
+import time
 
 from playwright.sync_api import sync_playwright
 
@@ -37,6 +39,23 @@ with sync_playwright() as p:
     page.on("pageerror", lambda exc: page_errors.append(str(exc)))
     page.on("download", lambda d: None)  # avoid hanging on the data: URL download
 
+    # #tweet-long's photo is an http URL served through route interception
+    # with an artificial delay — simulating a real pbs.twimg.com image that
+    # arrives only *after* the card DOM has been built, the exact condition
+    # that used to make the one-time measurements (wallpaper frame, preview
+    # scale) run against a still-0px-tall image. 500x900 = a tall portrait.
+    TALL_SVG = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="900">'
+        '<rect width="500" height="900" fill="#4477aa"/>'
+        '<circle cx="250" cy="450" r="180" fill="#ddaa33"/></svg>'
+    )
+
+    def serve_tall_image(route):
+        time.sleep(0.4)
+        route.fulfill(status=200, content_type="image/svg+xml", body=TALL_SVG)
+
+    page.route(re.compile(r"snapcard\.mock/tall\.svg"), serve_tall_image)
+
     page.add_init_script(
         "window.__snapcardI18nMessages = %s; window.__snapcardLocale = 'zh-CN';"
         % json.dumps({"en": I18N_EN, "zh_CN": I18N_ZH_CN})
@@ -45,12 +64,13 @@ with sync_playwright() as p:
     page.goto(MOCK)
     page.wait_for_timeout(200)
 
-    # ---- 1) button injected (mock.html has 2 articles — the main mock
-    # tweet, and #tweet-2col used only by the media-aspect-ratio test) ----
+    # ---- 1) button injected (mock.html has 4 articles — the main mock
+    # tweet, #tweet-2col for the two-image layout test, #tweet-3pic for the
+    # stack-mode test, and #tweet-long for the slow-image regression) ----
     btn_count = page.locator("article .snapcard-btn").count()
     print("1) buttons injected across articles:", btn_count)
-    if btn_count != 2:
-        fails.append(f"expected exactly 2 .snapcard-btn (one per mock article), got {btn_count}")
+    if btn_count != 4:
+        fails.append(f"expected exactly 4 .snapcard-btn (one per mock article), got {btn_count}")
 
     # ---- 2) click opens modal; a loading spinner shows immediately (before
     # extraction/settings-read finishes), then the card replaces it. Checked
@@ -60,7 +80,7 @@ with sync_playwright() as p:
     # so the spinner must already be in the DOM at this point if the "open
     # modal immediately, build the card asynchronously" behavior is real.
     # (Scoped to the main mock tweet, not #tweet-2col.) ----
-    page.locator('article:not(#tweet-2col) .snapcard-btn').click()
+    page.locator('article:not(#tweet-2col):not(#tweet-long):not(#tweet-3pic) .snapcard-btn').click()
     spinner_immediately = page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
@@ -409,7 +429,7 @@ with sync_playwright() as p:
     )
     page.wait_for_timeout(150)
     still_open = page.evaluate("() => !!document.getElementById('snapcard-host')")
-    page.locator('article:not(#tweet-2col) .snapcard-btn').click()
+    page.locator('article:not(#tweet-2col):not(#tweet-long):not(#tweet-3pic) .snapcard-btn').click()
     page.wait_for_timeout(200)
     reopened = page.evaluate(
         """() => {
@@ -651,7 +671,7 @@ with sync_playwright() as p:
         """(url) => new Promise((resolve) => chrome.storage.local.set({ customBgs: [url] }, resolve))""",
         FAKE_CUSTOM_BG,
     )
-    page.locator('article:not(#tweet-2col) .snapcard-btn').click()
+    page.locator('article:not(#tweet-2col):not(#tweet-long):not(#tweet-3pic) .snapcard-btn').click()
     page.wait_for_timeout(400)
     # this modal remembers style=黑色 from step 9 — switch to 壁纸 and expand
     page.evaluate(
@@ -733,11 +753,12 @@ with sync_playwright() as p:
     elif not after_delete["bgSrc"] or "bg-aurora" not in after_delete["bgSrc"]:
         fails.append(f"expected selection to fall back to Aurora after deleting the selected custom background, got {after_delete['bgSrc']!r}")
 
-    # ---- 14) media grid mirrors X's own displayed aspect ratio: the second
-    # mock tweet (#tweet-2col) has two tweetPhoto containers explicitly sized
-    # 254x460 (a tall portrait ratio, like X shows a pair of portrait
-    # screenshots) — the card's grid cells must end up the same shape, not
-    # force-cropped to some generic fixed ratio. ----
+    # ---- 14) two images show FULLY, side by side at equal height (2026-08-20
+    # user spec): #tweet-2col's photos have natural sizes 300x600 (ratio 0.5)
+    # and 600x600 (ratio 1.0). finalizeMediaLayout must split the two columns
+    # proportionally to those natural ratios so both images render complete
+    # and the two cells end up the same height. (The 254x460 timeline
+    # container ratio is now only the pre-load placeholder.) ----
     page.evaluate(
         """() => {
           const host = document.getElementById('snapcard-host');
@@ -775,23 +796,25 @@ with sync_playwright() as p:
           );
           const result = cells.map((c) => {
             const r = c.getBoundingClientRect();
-            return r.width / r.height;
+            return { ratio: r.width / r.height, height: r.height };
           });
           document.body.removeChild(probe);
           return result;
         }"""
     )
-    print(f"14) mock timeline container ratio: {mock_ratio:.4f}, card grid cell ratios: {card_ratios}")
-    if not card_ratios:
-        fails.append("could not find media grid cells (style.aspectRatio + position:relative) in the #tweet-2col card")
+    print(f"14) timeline placeholder ratio: {mock_ratio:.4f}, card 2-up cells: {card_ratios}")
+    if not card_ratios or len(card_ratios) != 2:
+        fails.append(f"expected exactly 2 media cells in the #tweet-2col card, got {card_ratios}")
     else:
-        for i, cell_ratio in enumerate(card_ratios):
-            diff = abs(cell_ratio - mock_ratio) / mock_ratio
-            if diff >= 0.05:
+        for i, expected in enumerate((0.5, 1.0)):
+            got = card_ratios[i]["ratio"]
+            if abs(got - expected) / expected >= 0.02:
                 fails.append(
-                    f"card grid cell {i} aspect ratio {cell_ratio:.4f} differs from mock timeline "
-                    f"container ratio {mock_ratio:.4f} by {diff:.1%} (must be < 5%)"
+                    f"2-up cell {i} should sit at its image's natural ratio {expected} (full display), got {got:.4f}"
                 )
+        h1, h2 = card_ratios[0]["height"], card_ratios[1]["height"]
+        if abs(h1 - h2) > 1:
+            fails.append(f"2-up cells should be equal height, got {h1:.1f} vs {h2:.1f}")
 
     # ---- 15a) fit-to-view: the #tweet-2col modal (still open from step 14,
     # tall portrait card that needs shrinking) must show the whole card within
@@ -910,7 +933,7 @@ with sync_playwright() as p:
     )
     page.wait_for_timeout(150)
     page.evaluate("() => { window.__snapcardLocale = 'en'; }")
-    page.locator('article:not(#tweet-2col) .snapcard-btn').click()
+    page.locator('article:not(#tweet-2col):not(#tweet-long):not(#tweet-3pic) .snapcard-btn').click()
     page.wait_for_timeout(400)
 
     en_style_labels = page.evaluate(
@@ -951,7 +974,7 @@ with sync_playwright() as p:
         }"""
     )
     page.wait_for_timeout(150)
-    page.locator('article:not(#tweet-2col) .snapcard-btn').click()
+    page.locator('article:not(#tweet-2col):not(#tweet-long):not(#tweet-3pic) .snapcard-btn').click()
     page.wait_for_timeout(400)
 
     # ---- 17) translated card shows ONLY the translation (no bilingual
@@ -1078,6 +1101,175 @@ with sync_playwright() as p:
     print("    after clicking 中:", back_to_zh)
     if not back_to_zh or not back_to_zh.get("copyLabel") or back_to_zh.get("toggleLabel") != "EN":
         fails.append(f"clicking 中 should rebuild the modal in Chinese with an 'EN' toggle, got {back_to_zh}")
+
+    # ---- 19) long tweet + slow-loading single image (the "long cards get
+    # clipped in preview AND zoom" regression). #tweet-long has multi-
+    # paragraph text and a photo with NO captured display ratio whose bytes
+    # arrive ~400ms late (see the route above). The card must (a) actually
+    # contain the image at its real height — export height way beyond the
+    # text-only height the buggy early measurement produced — and (b) still
+    # fit the 56vh preview viewport; then in Wallpaper mode the frame must
+    # wrap the *final* card size with the fixed 60px pad on every side. ----
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          if (host) {
+            const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+            const btn = btns.find((b) => ['关闭', 'Close'].includes(b.textContent.trim()));
+            if (btn) btn.click();
+          }
+        }"""
+    )
+    page.wait_for_timeout(150)
+    page.locator('#tweet-long .snapcard-btn').click()
+    page.wait_for_timeout(2200)  # image delay + decode-wait + rebuild
+
+    long_fit = page.evaluate(
+        """async () => {
+          const host = document.getElementById('snapcard-host');
+          const shadow = host.shadowRoot;
+          const viewport = shadow.querySelector('[data-snapcard-role="preview-viewport"]');
+          const wrapper = shadow.querySelector('[data-snapcard-role="preview-scaled-wrapper"]');
+          const exportEl = host.__snapcardExportEl;
+          if (!viewport || !wrapper || !exportEl) return null;
+          const probe = document.createElement('div');
+          probe.style.cssText = 'position:fixed;left:-9999px;top:0;';
+          const clone = exportEl.cloneNode(true);
+          probe.appendChild(clone);
+          document.body.appendChild(probe);
+          await Promise.all(Array.from(clone.querySelectorAll('img')).map((i) => i.decode().catch(() => {})));
+          const exportH = clone.getBoundingClientRect().height;
+          document.body.removeChild(probe);
+          return {
+            viewportH: viewport.getBoundingClientRect().height,
+            wrapperH: wrapper.getBoundingClientRect().height,
+            exportH,
+          };
+        }"""
+    )
+    print("19) long tweet fit-to-view:", long_fit)
+    if not long_fit or long_fit["exportH"] <= 900:
+        fails.append(f"long-tweet card should include the late image (export height > 900), got {long_fit}")
+    if long_fit and long_fit["wrapperH"] > long_fit["viewportH"] + 1:
+        fails.append(f"long-tweet preview overflows its viewport (was the scale measured before the image loaded?): {long_fit}")
+
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+          const btn = btns.find((b) => b.textContent.trim() === '壁纸');
+          if (btn) btn.click();
+        }"""
+    )
+    page.wait_for_timeout(1500)
+    frame_fit = page.evaluate(
+        """async () => {
+          const host = document.getElementById('snapcard-host');
+          const exportEl = host.__snapcardExportEl;
+          if (!exportEl || exportEl.dataset.snapcardRole !== 'wallpaper-frame') return null;
+          const probe = document.createElement('div');
+          probe.style.cssText = 'position:fixed;left:-9999px;top:0;';
+          const clone = exportEl.cloneNode(true);
+          probe.appendChild(clone);
+          document.body.appendChild(probe);
+          await Promise.all(Array.from(clone.querySelectorAll('img')).map((i) => i.decode().catch(() => {})));
+          const frameRect = clone.getBoundingClientRect();
+          const centerLayer = clone.querySelector('[data-snapcard-role="wallpaper-bg"]').nextElementSibling;
+          const cardRect = centerLayer.firstElementChild.getBoundingClientRect();
+          document.body.removeChild(probe);
+          return {
+            frameW: frameRect.width, frameH: frameRect.height,
+            cardW: cardRect.width, cardH: cardRect.height,
+          };
+        }"""
+    )
+    print("    wallpaper frame vs final card:", frame_fit)
+    if not frame_fit or frame_fit["cardH"] <= 900:
+        fails.append(f"wallpaper-mode long card should include the late image (card height > 900), got {frame_fit}")
+    if frame_fit and (abs(frame_fit["frameH"] - frame_fit["cardH"] - 120) > 2 or abs(frame_fit["frameW"] - frame_fit["cardW"] - 120) > 2):
+        fails.append(f"wallpaper frame no longer wraps the final card with 60px pads on all sides: {frame_fit}")
+
+    # ---- 20) opt-in vertical stack for 3+ images: #tweet-3pic (natural
+    # ratios 0.5 / 1.0 / 1.333) defaults to the X-style 3-tile grid; checking
+    # 图片竖排 must relayout to a full-width vertical stack with every image
+    # at its own natural ratio; unchecking restores the grid. ----
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          if (host) {
+            const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+            const btn = btns.find((b) => ['关闭', 'Close'].includes(b.textContent.trim()));
+            if (btn) btn.click();
+          }
+        }"""
+    )
+    page.wait_for_timeout(150)
+    page.locator('#tweet-3pic .snapcard-btn').click()
+    page.wait_for_timeout(500)
+
+    def media_layout():
+        return page.evaluate(
+            """async () => {
+              const host = document.getElementById('snapcard-host');
+              const exportEl = host.__snapcardExportEl;
+              if (!exportEl) return null;
+              const probe = document.createElement('div');
+              probe.style.cssText = 'position:fixed;left:-9999px;top:0;';
+              const clone = exportEl.cloneNode(true);
+              probe.appendChild(clone);
+              document.body.appendChild(probe);
+              await Promise.all(Array.from(clone.querySelectorAll('img')).map((i) => i.decode().catch(() => {})));
+              const wrap = clone.querySelector('[data-snapcard-media]');
+              const tiles = wrap
+                ? Array.from(wrap.querySelectorAll('div')).filter((d) => d.style.aspectRatio && d.style.position === 'relative')
+                : [];
+              const rects = tiles.map((t) => {
+                const r = t.getBoundingClientRect();
+                return { width: r.width, ratio: r.width / r.height };
+              });
+              document.body.removeChild(probe);
+              return { kind: wrap ? wrap.dataset.snapcardMedia : null, tiles: rects };
+            }"""
+        )
+
+    grid_default = media_layout()
+    print("20) 3-image default layout:", grid_default)
+    if not grid_default or grid_default["kind"] != "3":
+        fails.append(f"3-image tweet should default to the X-style grid (kind '3'), got {grid_default}")
+
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const cb = host.shadowRoot.querySelector('[data-snapcard-role="stack-images-checkbox"]');
+          if (cb) cb.click();
+        }"""
+    )
+    page.wait_for_timeout(400)
+    stacked = media_layout()
+    print("    after checking 图片竖排:", stacked)
+    if not stacked or stacked["kind"] != "stack" or len(stacked["tiles"]) != 3:
+        fails.append(f"expected a 3-tile vertical stack after checking 图片竖排, got {stacked}")
+    else:
+        for i, expected in enumerate((0.5, 1.0, 400 / 300)):
+            got = stacked["tiles"][i]["ratio"]
+            if abs(got - expected) / expected >= 0.02:
+                fails.append(f"stacked tile {i} should be at natural ratio {expected:.3f}, got {got:.4f}")
+        widths = [t["width"] for t in stacked["tiles"]]
+        if max(widths) - min(widths) > 1 or abs(widths[0] - 536) > 2:
+            fails.append(f"stacked tiles should all span the card's 536px content width, got {widths}")
+
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const cb = host.shadowRoot.querySelector('[data-snapcard-role="stack-images-checkbox"]');
+          if (cb) cb.click();
+        }"""
+    )
+    page.wait_for_timeout(400)
+    grid_back = media_layout()
+    print("    after unchecking:", {"kind": grid_back and grid_back["kind"]})
+    if not grid_back or grid_back["kind"] != "3":
+        fails.append(f"unchecking 图片竖排 should restore the X-style grid, got {grid_back}")
 
 if console_errors:
     print("\nconsole errors captured:")

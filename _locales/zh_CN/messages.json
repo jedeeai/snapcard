@@ -35,6 +35,7 @@
   "closeButton": { "message": "关闭" },
   "scrollHintText": { "message": "复制按钮在下面 ↓" },
   "langToggleTitle": { "message": "切换界面语言" },
+  "stackImagesLabel": { "message": "图片竖排" },
   "watermarkLabel": { "message": "在卡片上显示 SnapCard 署名" },
   "brandBarText": { "message": "X榜单 xbangdan.com 出品" },
   "brandLogoAlt": { "message": "X榜单" }

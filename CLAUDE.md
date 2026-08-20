@@ -60,6 +60,12 @@
   - `buildCard` options 新增 `locale`（content.js 传 `effectiveLocale()`），`formatTime(iso, locale)` 优先用它、缺省才读 `getUILanguage()`。
   - 测试联动：mock 的 `sendMessage` 对 `getMessages` 返回 smoke.py 注入的真实 messages.json 表、对 `translate` 返回固定「模拟翻译结果」；smoke.py 新增第 17 项（翻译后 `text-translated` 存在且 `text-original` 必须不存在，取消勾选后还原）和第 18 项（中文界面 toggle 显示 EN → 点击后浏览器 locale 仍是 zh-CN 但整个 modal 重建成英文 → 再点回中文），第 16 项（浏览器语言驱动，uiLang=auto）保持原样不动。
 
+- **2026-08-20（v0.8.20.4）媒体布局改成「natural 尺寸终定」两段式＋图片显示规则改版（杰哥当日拍板）**：
+  - **两段式机制**：`buildCard` 先用时间线捕获的显示比例当**预加载占位**（保证图片没到时布局也不是 0 高），content.js 的 `buildExportEl` 在 `waitForImages`（全部 `<img>` decode 完，5 秒兜底超时）之后调 `window.SnapCard.finalizeMediaLayout(card)` 按图片 **naturalWidth/Height** 锁定最终布局，然后才轮到壁纸框测量和预览缩放测量。媒体 wrap 挂 `data-snapcard-media`（"1"/"2"/"3"/"4"/"stack"）供 finalize 定位。
+  - **显示规则**：单图＝完整显示、宽度对齐正文（natural 比例、去掉 700px maxHeight 裁剪，超长截图就让卡片变长，预览会自动缩小属预期）；双图＝并排等高且都完整显示（`gridTemplateColumns` 按两图 natural 比例分 fr，等高是数学必然）；三四图默认仍镜像 X 网格；**3+ 图新增「图片竖排」开关**（`storage.sync` key `stackImages` 默认 false，跟 hideStats/hideTime 同款第三个开关，仍未抽象——三个都还是平行实现，下次再有就该抽了），开了以后全宽竖排一张接一张、各自 natural 比例、900px 安全阀故意不管它。开关只在推文图片 ≥3 张时出现。
+  - **rebuildCard 变 async**：等图片期间不清空 previewWrap（首次保留 spinner、切换保留旧卡片，不闪白），`rebuildSeq` 单调计数丢弃过期重建（快速连点样式按钮时旧的异步结果不许覆盖新的）。
+  - 测试：tweet-2col 的图换成 300×600/600×600 两张不同 natural 比例的 SVG data URI，第 14 项从「镜像时间线比例」改为断言「natural 比例＋等高」；新增 #tweet-3pic（0.5/1.0/1.333 三比例）和第 20 项（默认 kind=3 → 勾竖排变 stack 且三格 536 宽 natural 比例 → 取消还原）；新增 #tweet-long＋smoke 里 `page.route` 人工延迟 400ms 的 http SVG 图，第 19 项断言长卡预览贴合视口＋壁纸框=卡片+120（这条是下面故障记录那个 bug 的回归锁）。
+
 ## X 改版高危点（改版先查这里）
 
 - 按钮注入锚点：`article` 内 `[role="group"]` 互动栏
@@ -77,6 +83,7 @@
 - `0.8.20`：i18n（`chrome.i18n` 自动跟随浏览器语言，en 默认 + zh_CN）+ 内置壁纸从苹果官方壁纸换成 7 张自制渐变图（版权，见上方关键决策）
 - `0.8.20.2`：过滤第三方插件注入元素（`isForeignNode`），修「昵称里冒出已收录」bug（见故障记录）
 - `0.8.20.3`：复制按钮剪贴板手势时效修复＋modal 右上角中/EN 界面语言手动切换＋翻译后只显示译文（见上方关键决策）
+- `0.8.20.4`：修长推文/慢图预览与放大显示不全（decode 后再测量，见故障记录）＋媒体布局改版：单图全显、双图等高全显、3+ 图「图片竖排」开关（见上方关键决策）
 
 ## 复用来源（只抄不引用）
 
@@ -87,6 +94,7 @@
 
 ## 故障记录
 
+- **2026-08-20（真实使用反馈）长推文/大图推文的预览缩略图显示不全，点放大也看不全顶部**：两个因素叠加。① 单图模式旧实现 `height:auto`，高度取决于图片自然尺寸，图片没下载完时是 0 高（多图网格有显式 aspect-ratio 不受影响）；② 三处一次性测量（`buildWallpaperFrame` 量卡片定外框、`renderScaledPreview` probe 量卡片定缩放、900px 安全阀）全部在图片加载完成**之前**执行。于是长推文（图片下载慢）量出一张「只有文字的矮卡片」，壁纸框和预览 wrapper 按矮的定死，图片到达后卡片猛涨：壁纸模式卡片在固定小框里居中→上下溢出→预览（overflow hidden）裁掉顶部，放大层里上溢部分在滚动容器可达范围之外（flex 居中溢出的上半段滚动条够不到），所以「放大也显示不全」。白卡模式则是预览 wrapper 高度定小了被裁下半截（8/19 三文治图片变扁条同根因）。修复＝`waitForImages`（img.decode 全部完成，5s 兜底）之后才测量＋单图给显式 aspect-ratio（见 v0.8.20.4 关键决策）。**教训：卡片布局里任何依赖图片自然尺寸的地方，都必须保证「测量发生在 decode 之后」或「布局根本不依赖加载状态」，一次性测量+异步资源=定时炸弹。** 回归锁：smoke 第 19 项用 `page.route` 人工延迟 400ms 的图复现，反证过（撤修复→壁纸框 535 vs 卡片 1115，红）。
 - **2026-08-20（真实使用反馈）「复制图片」第一次点经常失败，切过一次样式再点就好了**：根因是 Chrome 的剪贴板写入要求 transient user activation（瞬时用户手势授权，点击后约 5 秒内有效），而旧代码是「先 `await renderCardToPng`（要现场下载头像＋所有配图，国内走代理时轻松超 5 秒）再 `clipboard.write`」——首次渲染冷缓存超时，write 被拒（NotAllowedError）；用户切一次样式等于让图片进了 HTTP 缓存，第二次渲染快到能赶在窗口内，看起来就像「必须先点别的才能用」。修复：点击瞬间就把 blob 的 Promise 塞进 `ClipboardItem` 同步调 `clipboard.write`（规范就是为这个场景设计的），渲染耗时不再受手势时效约束；顺带给复制按钮加了「生成中…」等待态（原来只有下载按钮有，复制按钮静默 disabled，用户以为卡死）。**教训：任何「用户点击 → 长异步 → 需要手势授权的 API（clipboard/window.open/全屏等）」链路都是这个坑，授权敏感调用必须在点击同步栈里发起。**
 - **2026-08-19 render.js 导出的 PNG 全白（无报错、无异常，纯白图）**：`renderCardToPng` 为离屏测量给克隆节点自身加了 `position:fixed;left:-9999px`，但后续 `XMLSerializer` 序列化的正是这同一个节点——`foreignObject` 里的内容因此继承了 `position:fixed`，相对 SVG 渲染上下文的视口定位到画布外，`ctx.drawImage` 什么也画不出来，但不报任何错。**教训：离屏测量绝不能直接改被序列化节点自身的 style，必须包一层 wrapper div 做离屏定位，克隆节点自己的 style 全程保持干净。** 修复后 `tests/smoke.py` 加了第 4 项断言：渲染完成后 `getImageData` 采样全画布像素，要求非白色像素数 > 0，防止这类"跑通但产出空白"的回归再次悄悄溜过。
 - **同日 `toLargeImage()` 把 `data:` URI 也当 http(s) URL 处理**：`new URL(dataUri).searchParams.set('name','large')` 会在 base64 payload 后面拼一个 `?name=large`，把 data URI 直接拼坏（浏览器报 `ERR_INVALID_URL`）。修复：函数开头判断 `url.startsWith('data:')` 直接原样返回，不做任何改写。真实 x.com 环境下配图都是 `https://pbs.twimg.com/...` 不会触发，但 mock 测试用 `data:` URI 模拟图片时会立刻暴露。

@@ -195,12 +195,16 @@
     return holder;
   }
 
-  // Used for the single-image layout: keep the image's own aspect ratio
-  // (width:100%, height:auto) instead of forcing it into a fixed box, only
-  // cropping via object-fit:cover once it would exceed max-height — so a
-  // wide landscape photo isn't squashed into a square/16:9 crop that cuts
-  // off its sides.
-  function buildSingleImageTile(src, hasVideo) {
+  // Used for the single-image layout. When X's own displayed ratio was
+  // captured (extractImages), it's set as an explicit CSS aspect-ratio so
+  // the tile's height is fully determined by layout *before* the image has
+  // loaded — an image-natural-size-dependent height (the old height:auto
+  // behavior, kept only as the no-captured-ratio fallback) measures as ~0
+  // in any probe that runs before the network delivers the image, which is
+  // exactly what sized wallpaper frames and preview scaling wrong on long
+  // tweets (see the fault log). object-fit:cover + max-height still cap
+  // pathologically tall images either way.
+  function buildSingleImageTile(src, hasVideo, displayRatio) {
     const holder = el("div", { position: "relative", overflow: "hidden", borderRadius: "16px" });
     const img = el("img", {
       width: "100%",
@@ -210,6 +214,7 @@
       objectFit: "cover",
       borderRadius: "16px",
     });
+    if (displayRatio) img.style.aspectRatio = String(displayRatio);
     img.src = src;
     holder.appendChild(img);
     if (hasVideo) holder.appendChild(buildPlayBadge());
@@ -274,14 +279,34 @@
   const MEDIA_MAX_HEIGHT = 900; // logical px cap on the whole media area, pre-export-scale
   const CARD_CONTENT_WIDTH = 536; // 600px card width minus 32px padding each side — fixed, every media grid renders at this width
 
-  function buildMediaGrid(images, hasVideo) {
+  function buildMediaGrid(images, hasVideo, stackImages) {
     if (!images || !images.length) return null;
     const list = images.slice(0, 4);
     const n = list.length;
 
     if (n === 1) {
       const wrap = el("div", { marginTop: "16px" });
-      wrap.appendChild(buildSingleImageTile(list[0].url, hasVideo));
+      wrap.dataset.snapcardMedia = "1";
+      wrap.appendChild(buildSingleImageTile(list[0].url, hasVideo, list[0].aspectRatio));
+      return wrap;
+    }
+
+    // Opt-in vertical layout for 3+ images: every image full content width,
+    // stacked one after another, each shown in full at its own ratio (the
+    // captured timeline ratio is only the pre-load placeholder here — see
+    // finalizeMediaLayout). The 900px height cap deliberately does NOT apply:
+    // "show every image completely" is the whole point of this mode.
+    if (stackImages && n >= 3) {
+      const wrap = el("div", {
+        marginTop: "16px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "4px",
+        borderRadius: "16px",
+        overflow: "hidden",
+      });
+      wrap.dataset.snapcardMedia = "stack";
+      list.forEach((item, i) => wrap.appendChild(buildGridTile(item.url, item.aspectRatio || 16 / 9, {}, hasVideo && i === 0)));
       return wrap;
     }
 
@@ -309,7 +334,55 @@
       wrap = layoutMediaGrid(urls, ratios, hasVideo);
     }
 
+    wrap.dataset.snapcardMedia = String(n);
     return wrap;
+  }
+
+  // Re-derives the media layout from the images' *natural* sizes once those
+  // are known — content.js calls this right after awaiting image decode and
+  // before anything measures the card. Layout spec (2026-08-20 user
+  // decision): 1 image → shown in full at the card's content width (its own
+  // natural ratio, no max-height crop — a very tall screenshot simply makes
+  // a tall card); 2 images → side by side at equal height with each image
+  // fully visible, the two column widths split proportionally to the two
+  // natural ratios (equal height falls out of the math: colWidth_i ∝ r_i,
+  // height_i = colWidth_i / r_i = same for both); "stack" (the opt-in 3+
+  // vertical mode) → every tile at its own natural ratio, full width. The
+  // 3/4-image grids keep mirroring X's displayed crop and aren't touched.
+  // Everything set before this (captured timeline ratios) is just the
+  // pre-load placeholder so early layout isn't 0px tall.
+  function finalizeMediaLayout(root) {
+    const wrap = root.querySelector("[data-snapcard-media]");
+    if (!wrap) return;
+    const kind = wrap.dataset.snapcardMedia;
+    const imgs = Array.from(wrap.querySelectorAll("img"));
+    const natural = (img) =>
+      img.naturalWidth > 0 && img.naturalHeight > 0 ? img.naturalWidth / img.naturalHeight : null;
+
+    if (kind === "1" && imgs[0]) {
+      const r = natural(imgs[0]);
+      if (r) {
+        imgs[0].style.aspectRatio = String(r);
+        imgs[0].style.maxHeight = "none";
+      }
+      return;
+    }
+    if (kind === "2" && imgs.length === 2) {
+      const r1 = natural(imgs[0]);
+      const r2 = natural(imgs[1]);
+      if (r1 && r2) {
+        wrap.style.gridTemplateColumns = `${r1}fr ${r2}fr`;
+        imgs[0].parentElement.style.aspectRatio = String(r1);
+        imgs[1].parentElement.style.aspectRatio = String(r2);
+      }
+      return;
+    }
+    if (kind === "stack") {
+      imgs.forEach((img) => {
+        const r = natural(img);
+        if (r) img.parentElement.style.aspectRatio = String(r);
+      });
+    }
   }
 
   // ---------- stat row ----------
@@ -434,7 +507,7 @@
     card.appendChild(body);
 
     // ----- media -----
-    const media = buildMediaGrid(data.images, !!data.hasVideo);
+    const media = buildMediaGrid(data.images, !!data.hasVideo, !!options.stackImages);
     if (media) card.appendChild(media);
 
     // ----- footer ----- (date now lives up in the header row; footer is stats-only)
@@ -543,6 +616,7 @@
 
   window.SnapCard = window.SnapCard || {};
   window.SnapCard.buildCard = buildCard;
+  window.SnapCard.finalizeMediaLayout = finalizeMediaLayout;
   window.SnapCard.buildWallpaperFrame = buildWallpaperFrame;
   window.SnapCard.formatCount = formatCount;
   window.SnapCard.formatTime = formatTime;

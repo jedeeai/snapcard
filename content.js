@@ -38,6 +38,7 @@
     collapseWallpapers: "Collapse ◂",
     hideStatsLabel: "Hide stats",
     hideTimeLabel: "Hide date",
+    stackImagesLabel: "Stack images",
     translateLabel: "Translate",
     translatingText: "Translating…",
     translateFailedText: "Couldn't reach the translation service",
@@ -637,6 +638,26 @@
     }
   }
 
+  // Whether 3+ images render as a full-width vertical stack instead of the
+  // X-mirroring grid. Same storage/memory pattern as hideStats/hideTime.
+  function getStackImagesSetting() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.sync.get({ stackImages: false }, (res) => resolve(!!res.stackImages));
+      } catch (_) {
+        resolve(false);
+      }
+    });
+  }
+
+  function saveStackImages(value) {
+    try {
+      chrome.storage.sync.set({ stackImages: !!value });
+    } catch (_) {
+      // not fatal — just won't be remembered next time
+    }
+  }
+
   // ---------- wallpaper background picker ----------
   // 7 built-in original gradient photos (bundled in assets/, self-made —
   // replaced the earlier Apple macOS wallpapers so the extension ships no
@@ -800,6 +821,23 @@
     return `${cleanHandle}_${stamp}.png`;
   }
 
+  // Resolves once every <img> currently inside `root` has finished loading
+  // and decoding — i.e. once layout that depends on natural image size is
+  // final. Broken images and a hung network resolve too (per-image catch +
+  // an overall timeout): measuring a slightly-wrong height beats hanging the
+  // modal forever. decode() works on detached nodes (loading starts when
+  // src is set, mounting is irrelevant).
+  function waitForImages(root, timeoutMs) {
+    const pending = Array.from(root.querySelectorAll("img")).map((img) =>
+      img.decode ? img.decode().catch(() => {}) : Promise.resolve()
+    );
+    if (!pending.length) return Promise.resolve();
+    return Promise.race([
+      Promise.all(pending),
+      new Promise((resolve) => setTimeout(resolve, timeoutMs || 5000)),
+    ]);
+  }
+
   function closeModal(host) {
     if (host && host.parentNode) host.parentNode.removeChild(host);
     document.removeEventListener("keydown", host.__snapcardEsc, true);
@@ -817,7 +855,7 @@
     if (!shell.host.isConnected) return; // closed before we got this far
 
     const data = extractTweetData(article);
-    const [watermark, style, customBgs, hideStats, hideTime, savedBgId, uiLang] = await Promise.all([
+    const [watermark, style, customBgs, hideStats, hideTime, savedBgId, uiLang, stackImages] = await Promise.all([
       getWatermarkSetting(),
       getSavedStyle(),
       getCustomBackgrounds(),
@@ -825,6 +863,7 @@
       getHideTimeSetting(),
       getSavedBackgroundId(),
       getUiLangSetting(),
+      getStackImagesSetting(),
     ]);
     if (!shell.host.isConnected) return; // closed while settings were loading
     await applyUiLang(uiLang); // must resolve before finishModal renders any t() text
@@ -836,6 +875,7 @@
       customBgs,
       hideStats,
       hideTime,
+      stackImages,
       bgId: sanitizeBgId(savedBgId, customBgs),
       article, // kept so the 中/EN toggle can rebuild this same modal from scratch
     });
@@ -991,6 +1031,7 @@
       customBgs: options.customBgs || [],
       hideStats: !!options.hideStats,
       hideTime: !!options.hideTime,
+      stackImages: !!options.stackImages,
       bgId: options.bgId || "aurora",
       exportEl: null, // the node render.js should actually export (card, or card+wallpaper frame)
     };
@@ -1006,19 +1047,30 @@
     // own requirement) — this node is never mounted inside previewWrap and
     // never gets a transform/scale of its own; see renderScaledPreview below
     // for why that separation matters.
-    function buildExportEl(cardData, cardOptions) {
-      if (state.style === "wallpaper") {
-        const card = window.SnapCard.buildCard(cardData, Object.assign({ theme: "white" }, cardOptions));
-        const stage = document.createElement("div");
-        Object.assign(stage.style, { position: "fixed", left: "-9999px", top: "0" });
-        stage.appendChild(card);
-        document.body.appendChild(stage);
-        const bgUrl = resolveBackgroundUrl(state.bgId, state.customBgs);
-        const frame = window.SnapCard.buildWallpaperFrame(card, bgUrl); // reparents card out of stage
-        document.body.removeChild(stage);
-        return frame;
-      }
-      return window.SnapCard.buildCard(cardData, Object.assign({ theme: state.style }, cardOptions));
+    async function buildExportEl(cardData, cardOptions) {
+      const theme = state.style === "wallpaper" ? "white" : state.style;
+      const card = window.SnapCard.buildCard(cardData, Object.assign({ theme }, cardOptions));
+      // Both one-time measurements downstream (the wallpaper frame's
+      // getBoundingClientRect here, the preview-scale probe in
+      // renderScaledPreview) need the card's layout to be *final* — and a
+      // single-image tile without a captured display ratio only reaches its
+      // real height once the image has loaded. Measuring before that was the
+      // "long tweets get clipped in preview AND zoom" bug (see fault log).
+      await waitForImages(card);
+      // Natural sizes are now known — lock the media area to its final
+      // layout (single image in full, 2-up equal height, stack mode) before
+      // anything measures the card.
+      window.SnapCard.finalizeMediaLayout(card);
+      if (state.style !== "wallpaper") return card;
+
+      const stage = document.createElement("div");
+      Object.assign(stage.style, { position: "fixed", left: "-9999px", top: "0" });
+      stage.appendChild(card);
+      document.body.appendChild(stage);
+      const bgUrl = resolveBackgroundUrl(state.bgId, state.customBgs);
+      const frame = window.SnapCard.buildWallpaperFrame(card, bgUrl); // reparents card out of stage
+      document.body.removeChild(stage);
+      return frame;
     }
 
     // Scales a *clone* of exportEl down to fit within `viewport` (never
@@ -1104,12 +1156,31 @@
       shadow.appendChild(zoomHost);
     }
 
-    function rebuildCard() {
-      previewWrap.innerHTML = ""; // clears the loading spinner on the first call
-      const cardData = Object.assign({}, data, { translatedText: state.translatedText });
-      const cardOptions = { watermark: options.watermark, hideStats: state.hideStats, hideTime: state.hideTime, locale: effectiveLocale() };
+    // Monotonic rebuild counter: buildExportEl awaits image decoding, so two
+    // rebuilds can overlap (rapid style clicks). Only the newest may touch
+    // previewWrap — a stale one finishing late would otherwise clobber the
+    // newer preview with an outdated card.
+    let rebuildSeq = 0;
 
-      state.exportEl = buildExportEl(cardData, cardOptions);
+    async function rebuildCard() {
+      const seq = ++rebuildSeq;
+      const cardData = Object.assign({}, data, { translatedText: state.translatedText });
+      const cardOptions = {
+        watermark: options.watermark,
+        hideStats: state.hideStats,
+        hideTime: state.hideTime,
+        stackImages: state.stackImages,
+        locale: effectiveLocale(),
+      };
+
+      const exportEl = await buildExportEl(cardData, cardOptions);
+      if (seq !== rebuildSeq || !host.isConnected) return; // superseded or modal closed while images loaded
+
+      // Only now clear the previous content (the loading spinner on the
+      // first call, the previous card afterwards) — while images decode the
+      // user keeps seeing the old state instead of a blank flash.
+      previewWrap.innerHTML = "";
+      state.exportEl = exportEl;
       // exportEl is intentionally never mounted inside previewWrap (the
       // visible preview shows a *scaled clone* of it — see
       // renderScaledPreview), so it isn't reachable via a shadow DOM query at
@@ -1495,6 +1566,35 @@
       rebuildCard();
     });
     leftControls.appendChild(hideTimeLabel);
+
+    // Vertical-stack toggle, only offered when it can do anything (3+
+    // images — 1 and 2 images already always show in full, see
+    // finalizeMediaLayout). Same pattern as the two hide toggles above.
+    if ((data.images || []).length >= 3) {
+      const stackLabel = document.createElement("label");
+      Object.assign(stackLabel.style, {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        fontSize: "13px",
+        color: "#0f1419",
+        cursor: "pointer",
+      });
+      const stackCheckbox = document.createElement("input");
+      stackCheckbox.type = "checkbox";
+      stackCheckbox.checked = state.stackImages;
+      stackCheckbox.dataset.snapcardRole = "stack-images-checkbox";
+      const stackText = document.createElement("span");
+      stackText.textContent = t("stackImagesLabel");
+      stackLabel.appendChild(stackCheckbox);
+      stackLabel.appendChild(stackText);
+      stackCheckbox.addEventListener("change", () => {
+        state.stackImages = stackCheckbox.checked;
+        saveStackImages(state.stackImages);
+        rebuildCard();
+      });
+      leftControls.appendChild(stackLabel);
+    }
 
     const statusText = document.createElement("span");
     Object.assign(statusText.style, { fontSize: "12px", color: "#536471" });
