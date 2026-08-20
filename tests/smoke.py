@@ -937,9 +937,147 @@ with sync_playwright() as p:
     if en_copy_label != "Copy image":
         fails.append(f"en locale: expected primary button text 'Copy image', got {en_copy_label!r}")
 
-    # reset back to zh-CN so nothing downstream (if this test ever grows more
-    # steps after this one) silently runs against the wrong locale
-    page.evaluate("() => { window.__snapcardLocale = 'zh-CN'; }")
+    # reset back to zh-CN so nothing downstream silently runs against the
+    # wrong locale, and reopen a fresh Chinese modal for the next checks
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          if (host) {
+            const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+            const btn = btns.find((b) => ['关闭', 'Close'].includes(b.textContent.trim()));
+            if (btn) btn.click();
+          }
+          window.__snapcardLocale = 'zh-CN';
+        }"""
+    )
+    page.wait_for_timeout(150)
+    page.locator('article:not(#tweet-2col) .snapcard-btn').click()
+    page.wait_for_timeout(400)
+
+    # ---- 17) translated card shows ONLY the translation (no bilingual
+    # stack): checking 翻译 must swap the body text to role "text-translated"
+    # with the mock translation, with no "text-original" block left; unchecking
+    # must restore the original. Checked on __snapcardExportEl (the real
+    # about-to-be-exported node — detached, so querySelector works but
+    # getComputedStyle would not; see the detached-node fault-log entry). ----
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const labels = Array.from(host.shadowRoot.querySelectorAll('label'));
+          const label = labels.find((l) => l.textContent.trim() === '翻译');
+          const cb = label && label.querySelector('input[type="checkbox"]');
+          if (cb) cb.click();
+        }"""
+    )
+    page.wait_for_timeout(300)
+    translated_state = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const exportEl = host.__snapcardExportEl;
+          if (!exportEl) return null;
+          const translated = exportEl.querySelector('[data-snapcard-role="text-translated"]');
+          return {
+            translatedText: translated ? translated.textContent : null,
+            originalPresent: !!exportEl.querySelector('[data-snapcard-role="text-original"]'),
+          };
+        }"""
+    )
+    print("17) translated-only card:", translated_state)
+    if not translated_state or translated_state.get("translatedText") != "模拟翻译结果":
+        fails.append(f"expected translated card body to be exactly the mock translation, got {translated_state}")
+    if translated_state and translated_state.get("originalPresent"):
+        fails.append("original text block still present on a translated card — card must show only the translation")
+
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const labels = Array.from(host.shadowRoot.querySelectorAll('label'));
+          const label = labels.find((l) => l.textContent.trim() === '翻译');
+          const cb = label && label.querySelector('input[type="checkbox"]');
+          if (cb) cb.click();
+        }"""
+    )
+    page.wait_for_timeout(200)
+    untranslated_state = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const exportEl = host.__snapcardExportEl;
+          const original = exportEl && exportEl.querySelector('[data-snapcard-role="text-original"]');
+          return {
+            originalBack: !!original,
+            translatedGone: !(exportEl && exportEl.querySelector('[data-snapcard-role="text-translated"]')),
+          };
+        }"""
+    )
+    print("    after unchecking 翻译:", untranslated_state)
+    if not untranslated_state.get("originalBack") or not untranslated_state.get("translatedGone"):
+        fails.append(f"unchecking 翻译 should restore the original-only body, got {untranslated_state}")
+
+    # ---- 18) manual 中/EN UI-language toggle: in a Chinese UI the corner
+    # button reads "EN"; clicking it stores uiLang="en" and rebuilds the whole
+    # modal in English (even though the browser locale is still zh-CN — this
+    # is exactly what distinguishes the manual override from test 16's
+    # browser-locale behavior); clicking the (now "中") button switches back. ----
+    toggle_label = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btn = host.shadowRoot.querySelector('[data-snapcard-role="lang-toggle"]');
+          return btn ? btn.textContent.trim() : null;
+        }"""
+    )
+    print("18) lang toggle label in Chinese UI:", toggle_label)
+    if toggle_label != "EN":
+        fails.append(f"expected lang toggle to read 'EN' in a Chinese UI, got {toggle_label!r}")
+
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btn = host.shadowRoot.querySelector('[data-snapcard-role="lang-toggle"]');
+          if (btn) btn.click();
+        }"""
+    )
+    page.wait_for_timeout(600)  # modal closes and fully reopens (extract + storage reads + locale fetch)
+    after_toggle = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          if (!host || !host.shadowRoot) return null;
+          const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+          const toggle = host.shadowRoot.querySelector('[data-snapcard-role="lang-toggle"]');
+          return {
+            copyLabel: btns.some((b) => b.textContent.trim() === 'Copy image'),
+            toggleLabel: toggle ? toggle.textContent.trim() : null,
+          };
+        }"""
+    )
+    print("    after clicking EN (browser locale still zh-CN):", after_toggle)
+    if not after_toggle or not after_toggle.get("copyLabel"):
+        fails.append(f"clicking the EN toggle should rebuild the modal in English, got {after_toggle}")
+    if after_toggle and after_toggle.get("toggleLabel") != "中":
+        fails.append(f"expected lang toggle to read '中' in an English UI, got {after_toggle}")
+
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btn = host.shadowRoot.querySelector('[data-snapcard-role="lang-toggle"]');
+          if (btn) btn.click();
+        }"""
+    )
+    page.wait_for_timeout(600)
+    back_to_zh = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          if (!host || !host.shadowRoot) return null;
+          const btns = Array.from(host.shadowRoot.querySelectorAll('button'));
+          const toggle = host.shadowRoot.querySelector('[data-snapcard-role="lang-toggle"]');
+          return {
+            copyLabel: btns.some((b) => b.textContent.trim() === '复制图片'),
+            toggleLabel: toggle ? toggle.textContent.trim() : null,
+          };
+        }"""
+    )
+    print("    after clicking 中:", back_to_zh)
+    if not back_to_zh or not back_to_zh.get("copyLabel") or back_to_zh.get("toggleLabel") != "EN":
+        fails.append(f"clicking 中 should rebuild the modal in Chinese with an 'EN' toggle, got {back_to_zh}")
 
 if console_errors:
     print("\nconsole errors captured:")

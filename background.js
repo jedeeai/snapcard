@@ -95,6 +95,24 @@ async function handleTranslate(text, target) {
   }
 }
 
+// Raw _locales/*/messages.json for content.js's manual 中/EN UI-language
+// override — chrome.i18n can only speak the browser's own language, so an
+// explicit choice needs the packaged file itself. Only the background can
+// fetch chrome-extension:// URLs without a web_accessible_resources entry.
+const localeMessagesCache = {};
+async function handleGetMessages(lang) {
+  const dir = lang === "zh" ? "zh_CN" : "en";
+  try {
+    if (!localeMessagesCache[dir]) {
+      const res = await fetch(chrome.runtime.getURL(`_locales/${dir}/messages.json`));
+      localeMessagesCache[dir] = await res.json();
+    }
+    return { ok: true, messages: localeMessagesCache[dir] };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return false;
 
@@ -105,6 +123,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "translate") {
     handleTranslate(msg.text, msg.target).then(sendResponse);
+    return true; // async response
+  }
+
+  if (msg.type === "getMessages") {
+    handleGetMessages(msg.lang).then(sendResponse);
     return true; // async response
   }
 

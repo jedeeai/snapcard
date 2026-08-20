@@ -34,6 +34,7 @@
   "renderFailedText": { "message": "Render failed" },
   "closeButton": { "message": "Close" },
   "scrollHintText": { "message": "Copy button is below ↓" },
+  "langToggleTitle": { "message": "Switch UI language" },
   "watermarkLabel": { "message": "Show the SnapCard watermark on cards" },
   "brandBarText": { "message": "Made by xbangdan.com" },
   "brandLogoAlt": { "message": "xbangdan" }

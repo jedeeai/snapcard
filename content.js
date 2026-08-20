@@ -49,6 +49,7 @@
     renderFailedText: "Render failed",
     closeButton: "Close",
     scrollHintText: "Copy button is below ↓",
+    langToggleTitle: "Switch UI language",
   };
 
   // Sequentially substitutes %s tokens in a fallback template — mirrors (in
@@ -67,7 +68,79 @@
   // manifest's default_locale, when a translation is missing); if the API
   // itself is unavailable for some reason, I18N_FALLBACK above is used
   // instead so the UI never renders a raw message key.
+  // ---- manual UI language override (the "中/EN" toggle in the modal) ----
+  // storage.sync key `uiLang`: "auto" (default — follow the browser via
+  // chrome.i18n, exactly the old behavior), or an explicit "zh"/"en" chosen
+  // with the toggle button in the modal's top-right corner. An explicit
+  // choice can't be served by chrome.i18n (it only ever speaks the browser's
+  // own language), so the real packaged _locales/*/messages.json is fetched
+  // once through background.js and t() resolves against that table instead;
+  // every "which language is the UI in" decision (translate direction, date
+  // format, the toggle's own label) follows the override too.
+  let uiLangOverride = "auto";
+  let overrideMessages = null; // parsed messages.json table for the explicit language, or null
+  const overrideMessagesCache = {};
+
+  function getUiLangSetting() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.sync.get({ uiLang: "auto" }, (res) =>
+          resolve(res.uiLang === "zh" || res.uiLang === "en" ? res.uiLang : "auto")
+        );
+      } catch (_) {
+        resolve("auto");
+      }
+    });
+  }
+
+  function saveUiLang(lang) {
+    try {
+      chrome.storage.sync.set({ uiLang: lang });
+    } catch (_) {
+      // not fatal — just won't be remembered next time
+    }
+  }
+
+  // Activates a language choice. On any failure the override table stays
+  // null and t() falls back to chrome.i18n — worst case the UI follows the
+  // browser language; it never renders raw message keys.
+  async function applyUiLang(lang) {
+    uiLangOverride = lang;
+    if (lang !== "zh" && lang !== "en") {
+      overrideMessages = null;
+      return;
+    }
+    if (!overrideMessagesCache[lang]) {
+      try {
+        const res = await chrome.runtime.sendMessage({ type: "getMessages", lang });
+        if (res && res.ok && res.messages) overrideMessagesCache[lang] = res.messages;
+      } catch (_) {
+        // background unreachable — keep the fallback chain
+      }
+    }
+    overrideMessages = overrideMessagesCache[lang] || null;
+  }
+
+  // chrome.i18n.getMessage()'s $PLACEHOLDER$ substitution, re-implemented
+  // for raw messages.json entries (placeholder names are case-insensitive;
+  // each placeholder's `content` is a "$1"-style index into substitutions).
+  function resolveRawMessage(entry, substitutions) {
+    const subs = substitutions == null ? [] : Array.isArray(substitutions) ? substitutions : [substitutions];
+    const placeholders = entry.placeholders || {};
+    return (entry.message || "").replace(/\$([A-Za-z0-9_]+)\$/g, (whole, name) => {
+      const ph = placeholders[name.toLowerCase()] || placeholders[name];
+      if (!ph) return whole;
+      const m = String(ph.content || "").match(/^\$(\d+)$/);
+      if (!m) return ph.content || "";
+      const idx = parseInt(m[1], 10) - 1;
+      return subs[idx] != null ? String(subs[idx]) : "";
+    });
+  }
+
   function t(key, substitutions) {
+    if (overrideMessages && overrideMessages[key]) {
+      return resolveRawMessage(overrideMessages[key], substitutions);
+    }
     try {
       const msg = chrome.i18n.getMessage(key, substitutions);
       if (msg) return msg;
@@ -78,10 +151,24 @@
   }
 
   function uiLanguageIsChinese() {
+    if (uiLangOverride === "zh") return true;
+    if (uiLangOverride === "en") return false;
     try {
       return (chrome.i18n.getUILanguage() || "").toLowerCase().indexOf("zh") === 0;
     } catch (_) {
       return false;
+    }
+  }
+
+  // The locale card.js should format the card's date in — the explicit
+  // override when one is active, the browser's UI language otherwise.
+  function effectiveLocale() {
+    if (uiLangOverride === "zh") return "zh-CN";
+    if (uiLangOverride === "en") return "en";
+    try {
+      return chrome.i18n.getUILanguage() || "en";
+    } catch (_) {
+      return "en";
     }
   }
 
@@ -91,6 +178,10 @@
   function translateTargetLang() {
     return uiLanguageIsChinese() ? "zh-CN" : "en";
   }
+
+  // Load any saved explicit language at startup so even the first modal's
+  // loading spinner (built before per-open settings are read) speaks it.
+  getUiLangSetting().then(applyUiLang);
 
   // ============================================================
   // Button injection
@@ -726,15 +817,18 @@
     if (!shell.host.isConnected) return; // closed before we got this far
 
     const data = extractTweetData(article);
-    const [watermark, style, customBgs, hideStats, hideTime, savedBgId] = await Promise.all([
+    const [watermark, style, customBgs, hideStats, hideTime, savedBgId, uiLang] = await Promise.all([
       getWatermarkSetting(),
       getSavedStyle(),
       getCustomBackgrounds(),
       getHideStatsSetting(),
       getHideTimeSetting(),
       getSavedBackgroundId(),
+      getUiLangSetting(),
     ]);
     if (!shell.host.isConnected) return; // closed while settings were loading
+    await applyUiLang(uiLang); // must resolve before finishModal renders any t() text
+    if (!shell.host.isConnected) return; // closed while the language table was loading
 
     finishModal(shell, data, {
       watermark,
@@ -743,6 +837,7 @@
       hideStats,
       hideTime,
       bgId: sanitizeBgId(savedBgId, customBgs),
+      article, // kept so the 中/EN toggle can rebuild this same modal from scratch
     });
   }
 
@@ -841,6 +936,39 @@
   // shown; now it all runs after an already-visible modal instead.
   function finishModal(shell, data, options) {
     const { host, shadow, panel, previewWrap } = shell;
+
+    // ----- UI language toggle (panel top-right) -----
+    // The button shows the language it switches *to*: "EN" while the UI is
+    // Chinese, "中" while it's English. Clicking stores the explicit choice
+    // (storage.sync `uiLang`) and rebuilds the modal through the exact same
+    // path as the original open, so every label re-renders in the new
+    // language — no in-place retranslation of dozens of nodes.
+    panel.style.position = "relative";
+    const langBtn = document.createElement("button");
+    langBtn.type = "button";
+    langBtn.dataset.snapcardRole = "lang-toggle";
+    langBtn.textContent = uiLanguageIsChinese() ? "EN" : "中";
+    langBtn.title = t("langToggleTitle");
+    Object.assign(langBtn.style, {
+      position: "absolute",
+      top: "12px",
+      right: "12px",
+      zIndex: "1",
+      border: "1px solid #cfd9de",
+      background: "#ffffff",
+      color: "#0f1419",
+      borderRadius: "9999px",
+      padding: "4px 10px",
+      fontSize: "12px",
+      fontWeight: "600",
+      cursor: "pointer",
+    });
+    langBtn.addEventListener("click", () => {
+      saveUiLang(uiLanguageIsChinese() ? "en" : "zh");
+      closeModal(host);
+      if (options.article) handleGenerateClick(options.article);
+    });
+    panel.appendChild(langBtn);
 
     if (data.truncated) {
       const notice = document.createElement("div");
@@ -979,7 +1107,7 @@
     function rebuildCard() {
       previewWrap.innerHTML = ""; // clears the loading spinner on the first call
       const cardData = Object.assign({}, data, { translatedText: state.translatedText });
-      const cardOptions = { watermark: options.watermark, hideStats: state.hideStats, hideTime: state.hideTime };
+      const cardOptions = { watermark: options.watermark, hideStats: state.hideStats, hideTime: state.hideTime, locale: effectiveLocale() };
 
       state.exportEl = buildExportEl(cardData, cardOptions);
       // exportEl is intentionally never mounted inside previewWrap (the
@@ -1438,9 +1566,27 @@
     copyBtn.addEventListener("click", async () => {
       const originalLabel = copyBtn.textContent;
       copyBtn.disabled = true;
+      copyBtn.textContent = t("downloadGeneratingText");
       try {
-        const { blob } = await window.SnapCard.renderCardToPng(state.exportEl, 2);
-        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+        // Hand the clipboard a *promise* of the PNG synchronously, while the
+        // click's transient user activation is still fresh. Rendering first
+        // fetches the avatar and every photo over the network, which can
+        // easily outlive the ~5s activation window — and a clipboard.write()
+        // issued after that window is rejected (NotAllowedError). That was
+        // the "copy only works after I've clicked around a bit" bug: the
+        // first render runs on a cold image cache and blows the window;
+        // later renders hit the HTTP cache and squeak in.
+        const blobPromise = window.SnapCard.renderCardToPng(state.exportEl, 2).then((r) => r.blob);
+        let items;
+        try {
+          items = [new ClipboardItem({ "image/png": blobPromise })];
+        } catch (_) {
+          // engine can't take a Promise in ClipboardItem — await the blob
+          // first (best effort; may still lose the activation window on
+          // very slow networks)
+          items = [new ClipboardItem({ "image/png": await blobPromise })];
+        }
+        await navigator.clipboard.write(items);
         copyBtn.textContent = t("copiedText");
       } catch (e) {
         copyBtn.textContent = t("copyFailedText");

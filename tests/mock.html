@@ -8,8 +8,9 @@
 
 <!-- Mock chrome extension API: storage.sync/local are real in-memory stores
      (so the theme/customBg round-trip is actually exercised), sendMessage
-     always resolves { ok:false } (simulates translation being unreachable,
-     which the smoke test explicitly does not need to succeed), getURL
+     answers getMessages with the real injected messages.json tables and
+     translate with a fixed fake translation (anything else gets { ok:false },
+     simulating an unreachable network), getURL
      resolves to the *real* assets/ folder (mock.html lives in tests/, so
      '../' + path reaches the actual assets/bg-aurora.jpg) — this exercises
      the real wallpaper file end to end instead of a synthetic stand-in.
@@ -71,6 +72,17 @@
       getURL: (path) => "../" + path,
       sendMessage: (msg) => {
         window.__sentMessages.push(msg);
+        if (msg && msg.type === "getMessages") {
+          // mirrors background.js's getMessages handler, serving the *real*
+          // messages.json content smoke.py injected (see i18n mock comment)
+          const table = window.__snapcardI18nMessages[msg.lang === "zh" ? "zh_CN" : "en"];
+          return Promise.resolve(table ? { ok: true, messages: table } : { ok: false, error: "mock: no such locale" });
+        }
+        if (msg && msg.type === "translate") {
+          // deterministic fake translation so the "translated card shows
+          // only the translation" behavior is testable offline
+          return Promise.resolve({ ok: true, text: "模拟翻译结果" });
+        }
         return Promise.resolve({ ok: false, error: "mock: no network in smoke test" });
       },
       onMessage: { addListener: () => {} },

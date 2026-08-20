@@ -55,23 +55,26 @@
 
   // ---------- formatting ----------
 
-  // Date format follows the UI language (chrome.i18n.getUILanguage()), not a
-  // fixed locale: "2026年8月19日 09:41" for zh-*, "Aug 19, 2026 · 09:41"
-  // (Intl en-US) for everything else. Read fresh on every call (not cached)
-  // so switching the browser's language and reopening the modal picks up
-  // the new format immediately — no reload of this script required.
-  function formatTime(iso) {
+  // Date format follows the UI language, not a fixed locale: "2026年8月19日
+  // 09:41" for zh-*, "Aug 19, 2026 · 09:41" (Intl en-US) for everything
+  // else. The caller may pass an explicit locale (content.js's 中/EN manual
+  // override); otherwise chrome.i18n.getUILanguage() is read fresh on every
+  // call (not cached) so switching the browser's language and reopening the
+  // modal picks up the new format immediately — no script reload required.
+  function formatTime(iso, locale) {
     if (!iso) return "";
     const d = new Date(iso);
     if (isNaN(d.getTime())) return "";
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
 
-    let uiLang = "en";
-    try {
-      uiLang = (chrome.i18n && chrome.i18n.getUILanguage && chrome.i18n.getUILanguage()) || "en";
-    } catch (_) {
-      // chrome.i18n unavailable — fall through to the English format below
+    let uiLang = locale || "";
+    if (!uiLang) {
+      try {
+        uiLang = (chrome.i18n && chrome.i18n.getUILanguage && chrome.i18n.getUILanguage()) || "en";
+      } catch (_) {
+        uiLang = "en"; // chrome.i18n unavailable — use the English format below
+      }
     }
 
     if (uiLang.toLowerCase().indexOf("zh") === 0) {
@@ -392,7 +395,7 @@
           color: palette.subtle,
           whiteSpace: "nowrap",
         },
-        { textContent: formatTime(data.datetime) }
+        { textContent: formatTime(data.datetime, options.locale) }
       );
       dateSpan.dataset.snapcardRole = "date";
       nameRow.appendChild(dateSpan);
@@ -408,32 +411,26 @@
     card.appendChild(header);
 
     // ----- body text -----
+    // When a translation is active the card shows *only* the translation
+    // (per user feedback: a shared card should read in one language, not as
+    // a bilingual original-plus-translation stack). Exactly one text block
+    // exists either way — role "text-translated" replaces "text-original".
     const body = el("div", { marginTop: "16px" });
-    const original = el("div", {
+    const textBlock = el("div", {
       fontSize: "17px",
       lineHeight: "1.65",
       whiteSpace: "pre-wrap",
       wordBreak: "break-word",
       color: palette.text,
     });
-    original.textContent = data.text || "";
-    original.dataset.snapcardRole = "text-original";
-    body.appendChild(original);
-
     if (data.translatedText) {
-      const divider = el("div", { height: "1px", background: palette.hairline, margin: "12px 0" });
-      const translated = el("div", {
-        fontSize: "17px",
-        lineHeight: "1.65",
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
-        color: palette.text,
-      });
-      translated.dataset.snapcardRole = "text-translated";
-      translated.textContent = data.translatedText;
-      body.appendChild(divider);
-      body.appendChild(translated);
+      textBlock.dataset.snapcardRole = "text-translated";
+      textBlock.textContent = data.translatedText;
+    } else {
+      textBlock.dataset.snapcardRole = "text-original";
+      textBlock.textContent = data.text || "";
     }
+    body.appendChild(textBlock);
     card.appendChild(body);
 
     // ----- media -----

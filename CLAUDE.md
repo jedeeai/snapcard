@@ -53,6 +53,13 @@
 - **测试联动（`tests/mock.html` + `tests/smoke.py`）**：mock 的 `chrome.i18n.getUILanguage()` 默认返回 `"zh-CN"`（存在 `window.__snapcardLocale`，可运行期改写不用刷新页面），`chrome.i18n.getMessage()` 自己实现了一份 chrome 官方占位符替换逻辑，但**读的数据不是手抄的**——`smoke.py` 用 Python 直接 `json.load` 两个真实 `_locales/*/messages.json` 文件，通过 `page.add_init_script()` 在页面任何脚本跑之前把内容注入 `window.__snapcardI18nMessages`，保证测的是真文件而不是 mock 里手抄的副本（早先 wallpaper 背景图那次假图坑就是"mock 手造数据看着像但不是真文件"的教训，这次直接照抄那次学到的教训提前避坑）。之所以选 `add_init_script` 注入而不是 mock 里用 `fetch()`/XHR 读 `_locales/*.json`：`file://` 页面里 `fetch()` 读本地文件会被 Chrome 拒绝（同一份故障记录里 wallpaper 背景图导出那条已经踩过一次），Python 直接读盘不受这个限制。新增第 16 项断言：把 `window.__snapcardLocale` 切成 `"en"` 后重新点开卡片按钮（不刷新页面），断言样式选择器变成 `['White','Dark','Wallpaper']`、主按钮变成 `'Copy image'`；原有 1-15 项全部保持字节级一致的中文文案断言不动（`_locales/zh_CN/messages.json` 的取值就是照抄这些文件里原来写死的中文字符串，一个字都没改，包括 emoji/箭头符号）。
 - **2026-08-20（v0.8.20）内置壁纸从苹果官方壁纸整批换成 7 张自制渐变图，纯粹是版权考虑**：准备上架 Chrome Web Store，插件里不能继续分发苹果版权素材（这 7 张 macOS 官方壁纸此前只标注"仅供个人使用"，公开分发会有版权风险）。新资产 `assets/bg-aurora.jpg`/`bg-sunset.jpg`/`bg-rose.jpg`/`bg-ocean.jpg`/`bg-violet.jpg`/`bg-golden.jpg`/`bg-graphite.jpg`，全部原创渐变、1400×1400 JPEG（60-85K），`git rm` 删掉了旧的 8 张苹果 webp 里的 7 张（`xbangdan-logo.svg` 不受影响，那是插件自己的 logo 不是壁纸）。`content.js` 的 `BUILTIN_BACKGROUNDS` 数组 id 从 `sequoia/sparrow/silver/rose-gold/albany-gold/space-gray/gradient-dark` 换成 `aurora/sunset/rose/ocean/violet/golden/graphite`，默认背景（数组第一项，`defaultWallpaperUrl()` 用的就是它）从 aurora 顶替 sequoia 的位置。**存量兼容**：`sanitizeBgId()` 原来只校验 `custom:N` 越界，改成先查 `bgId` 是否命中当前 `BUILTIN_BACKGROUNDS` 任意一项，命中才放行，不命中（包括所有旧苹果壁纸 id）一律回落 `"aurora"`——不能只靠 `resolveBackgroundUrl()` 那边的兜底（虽然它也会兜底出正确的图，但 `state.bgId` 停留在死 id 上会导致缩略图行没有任何一项显示"选中"高亮，是那种"图对了、UI 状态却是错的"典型坑，所以兜底必须做在 `sanitizeBgId` 这一层，让 `state.bgId` 本身就是干净的）。README 中英两版都加了一句：想用苹果官方壁纸的用户自己去苹果官网下载，再走「上传背景」用，插件本身不再内置任何苹果素材。`tests/mock.html`/`tests/smoke.py` 里所有写死的 `bg-sequoia`/`bg-gradient-dark`/`Sequoia 壁纸`/`Gradient Dark 壁纸`/`naturalWidth 2406`/`naturalWidth 700` 全部换成 `bg-aurora`/`bg-graphite`/`Aurora 壁纸`/`Graphite 壁纸`/`naturalWidth 1400`（7 张新图统一 1400×1400，不用像旧图那样每张记不同尺寸）。
 
+- **2026-08-20（v0.8.20.3）三项真实使用反馈改动**：
+  1. **复制按钮改「先交承诺再渲染」**（根因见故障记录的剪贴板手势时效条目）：点击瞬间把 `renderCardToPng(...).then(r => r.blob)` 这个 Promise 直接塞进 `ClipboardItem` 同步调 `clipboard.write`，渲染多慢都不会超出用户手势时效；构造器不接受 Promise 的引擎（同步抛 TypeError）回退旧的先 await 再写路径。复制按钮渲染期间显示「生成中…」（复用 `downloadGeneratingText` key，不新增文案）。
+  2. **modal 右上角「中/EN」手动切换界面语言**：`storage.sync` key `uiLang`（`"auto"` 默认跟浏览器 / `"zh"` / `"en"`）。chrome.i18n 只会说浏览器自己的语言，所以显式选择走 background 新消息 `getMessages` fetch 真实 `_locales/*/messages.json`（background 不需要 web_accessible_resources 就能 fetch 扩展内文件），content.js 的 `t()` 先查 override 表（`resolveRawMessage` 自实现 chrome 官方 `$PLACEHOLDER$` 替换，抄自 mock.html 那份），`uiLanguageIsChinese()`/`effectiveLocale()`/`translateTargetLang()` 全部跟随 override——即翻译方向、卡片日期格式、所有 UI 文案一体联动。按钮显示的是「要切过去的语言」（中文界面显示 EN，英文界面显示 中）。切换实现＝存 uiLang → `closeModal` → 拿着传进 `finishModal` options 的 `article` 重跑 `handleGenerateClick` 整体重建，不做几十个节点的原地改字。popup 不在此范围，仍跟浏览器语言。content.js 启动时异步预读一次 uiLang（让首个 modal 的 spinner 文案也说对语言）。
+  3. **翻译后卡片只显示译文**：card.js 正文只建一个文本块，有 `translatedText` 时 role 是 `text-translated` 且不再创建 `text-original`（原来是原文＋分隔线＋译文双语堆叠），分享出去的卡片只说一种语言。
+  - `buildCard` options 新增 `locale`（content.js 传 `effectiveLocale()`），`formatTime(iso, locale)` 优先用它、缺省才读 `getUILanguage()`。
+  - 测试联动：mock 的 `sendMessage` 对 `getMessages` 返回 smoke.py 注入的真实 messages.json 表、对 `translate` 返回固定「模拟翻译结果」；smoke.py 新增第 17 项（翻译后 `text-translated` 存在且 `text-original` 必须不存在，取消勾选后还原）和第 18 项（中文界面 toggle 显示 EN → 点击后浏览器 locale 仍是 zh-CN 但整个 modal 重建成英文 → 再点回中文），第 16 项（浏览器语言驱动，uiLang=auto）保持原样不动。
+
 ## X 改版高危点（改版先查这里）
 
 - 按钮注入锚点：`article` 内 `[role="group"]` 互动栏
@@ -69,6 +76,7 @@
 - `0.8.19`：Style 切换 + 中文化 + 品牌栏首发
 - `0.8.20`：i18n（`chrome.i18n` 自动跟随浏览器语言，en 默认 + zh_CN）+ 内置壁纸从苹果官方壁纸换成 7 张自制渐变图（版权，见上方关键决策）
 - `0.8.20.2`：过滤第三方插件注入元素（`isForeignNode`），修「昵称里冒出已收录」bug（见故障记录）
+- `0.8.20.3`：复制按钮剪贴板手势时效修复＋modal 右上角中/EN 界面语言手动切换＋翻译后只显示译文（见上方关键决策）
 
 ## 复用来源（只抄不引用）
 
@@ -79,6 +87,7 @@
 
 ## 故障记录
 
+- **2026-08-20（真实使用反馈）「复制图片」第一次点经常失败，切过一次样式再点就好了**：根因是 Chrome 的剪贴板写入要求 transient user activation（瞬时用户手势授权，点击后约 5 秒内有效），而旧代码是「先 `await renderCardToPng`（要现场下载头像＋所有配图，国内走代理时轻松超 5 秒）再 `clipboard.write`」——首次渲染冷缓存超时，write 被拒（NotAllowedError）；用户切一次样式等于让图片进了 HTTP 缓存，第二次渲染快到能赶在窗口内，看起来就像「必须先点别的才能用」。修复：点击瞬间就把 blob 的 Promise 塞进 `ClipboardItem` 同步调 `clipboard.write`（规范就是为这个场景设计的），渲染耗时不再受手势时效约束；顺带给复制按钮加了「生成中…」等待态（原来只有下载按钮有，复制按钮静默 disabled，用户以为卡死）。**教训：任何「用户点击 → 长异步 → 需要手势授权的 API（clipboard/window.open/全屏等）」链路都是这个坑，授权敏感调用必须在点击同步栈里发起。**
 - **2026-08-19 render.js 导出的 PNG 全白（无报错、无异常，纯白图）**：`renderCardToPng` 为离屏测量给克隆节点自身加了 `position:fixed;left:-9999px`，但后续 `XMLSerializer` 序列化的正是这同一个节点——`foreignObject` 里的内容因此继承了 `position:fixed`，相对 SVG 渲染上下文的视口定位到画布外，`ctx.drawImage` 什么也画不出来，但不报任何错。**教训：离屏测量绝不能直接改被序列化节点自身的 style，必须包一层 wrapper div 做离屏定位，克隆节点自己的 style 全程保持干净。** 修复后 `tests/smoke.py` 加了第 4 项断言：渲染完成后 `getImageData` 采样全画布像素，要求非白色像素数 > 0，防止这类"跑通但产出空白"的回归再次悄悄溜过。
 - **同日 `toLargeImage()` 把 `data:` URI 也当 http(s) URL 处理**：`new URL(dataUri).searchParams.set('name','large')` 会在 base64 payload 后面拼一个 `?name=large`，把 data URI 直接拼坏（浏览器报 `ERR_INVALID_URL`）。修复：函数开头判断 `url.startsWith('data:')` 直接原样返回，不做任何改写。真实 x.com 环境下配图都是 `https://pbs.twimg.com/...` 不会触发，但 mock 测试用 `data:` URI 模拟图片时会立刻暴露。
 - **2026-08-19（追加验收）正文被拆成多行、emoji 独占一行还带缩进**：根因是 `textWithEmoji()` 把兄弟节点之间的「纯空白文本节点」（HTML 源码里标签之间的换行+缩进，比如 `</span>\n  <img ...>`）当成正文内容原样拼接进去了——真实 tweetText 一行文字中 span/img/span 之间如果 DOM 里存在这种格式化空白，字面的 `\n  ` 就会被当成真实换行和缩进拼进结果。之前只在 pretty-print 过的 mock.html 里暴露（X 真实 React 输出是压缩过的，理论上没有这类空白，但不能假设改版后依然如此）。修复：`textWithEmoji()` 遇到纯空白文本节点时不再原样拼接，折叠成一个空格（非空白内容的文本节点不受影响，保留其中真实的 `\n`）；`extractText`/`extractNameAndHandle` 之后再过一遍 `normalizeExtractedText()`，把空格/制表符折叠、把换行两侧多余空格清掉，但不动换行符本身——这样真实的多段落推文（换行是文本节点内字面 `\n`）依然保留，只有格式化空白被清理。验收用 `getClientRects().length` 在真实渲染后的卡片正文 div 上采样，断言等于推文应有的行数（这条 mock 是 1 行），比单纯比对提取出的字符串更硬——直接验证浏览器实际怎么排版，不是我自己猜的。
