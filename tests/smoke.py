@@ -288,8 +288,8 @@ with sync_playwright() as p:
     print(f"6) 黑色 clicked={clicked_dark}, background {bg_before!r} -> {bg_after!r}")
     if not clicked_dark:
         fails.append("could not click the '黑色' style button")
-    elif bg_after != "rgb(0, 0, 0)":
-        fails.append(f"expected card background rgb(0, 0, 0) after switching to 黑色, got {bg_after!r}")
+    elif bg_after != "rgb(17, 19, 24)":
+        fails.append(f"expected card background rgb(17, 19, 24) after switching to 黑色, got {bg_after!r}")
     elif bg_before == bg_after:
         fails.append("card background did not change when switching from 白色 to 黑色")
 
@@ -379,8 +379,8 @@ with sync_playwright() as p:
         vals = (pad_info["left"], pad_info["right"], pad_info["top"], pad_info["bottom"])
         if len(set(vals)) != 1:
             fails.append(f"wallpaper padding not equal on all 4 sides: {pad_info}")
-        elif vals[0] != 60:
-            fails.append(f"wallpaper padding should be a fixed 60px, got {vals[0]}px")
+        elif vals[0] != 36:
+            fails.append(f"wallpaper padding should default to 36px, got {vals[0]}px")
 
     # ---- 8) Copy is the primary (blue) button and comes first; Download is
     # secondary (white/outlined) and comes second ----
@@ -449,8 +449,8 @@ with sync_playwright() as p:
         fails.append("modal host was still present right after clicking 关闭")
     if not reopened:
         fails.append("modal did not reopen after clicking the article button again")
-    elif reopened.get("bg") != "rgb(0, 0, 0)":
-        fails.append(f"expected reopened card to remember 黑色 (black bg), got {reopened.get('bg')!r}")
+    elif reopened.get("bg") != "rgb(17, 19, 24)":
+        fails.append(f"expected reopened card to remember 黑色 (dark charcoal bg), got {reopened.get('bg')!r}")
     elif not reopened.get("darkSelected"):
         fails.append("expected '黑色' style button to show as selected on reopen")
 
@@ -1174,7 +1174,7 @@ with sync_playwright() as p:
           document.body.appendChild(probe);
           await Promise.all(Array.from(clone.querySelectorAll('img')).map((i) => i.decode().catch(() => {})));
           const frameRect = clone.getBoundingClientRect();
-          const centerLayer = clone.querySelector('[data-snapcard-role="wallpaper-bg"]').nextElementSibling;
+          const centerLayer = clone.querySelector('[data-snapcard-role="wallpaper-center"]');
           const cardRect = centerLayer.firstElementChild.getBoundingClientRect();
           document.body.removeChild(probe);
           return {
@@ -1186,8 +1186,8 @@ with sync_playwright() as p:
     print("    wallpaper frame vs final card:", frame_fit)
     if not frame_fit or frame_fit["cardH"] <= 900:
         fails.append(f"wallpaper-mode long card should include the late image (card height > 900), got {frame_fit}")
-    if frame_fit and (abs(frame_fit["frameH"] - frame_fit["cardH"] - 120) > 2 or abs(frame_fit["frameW"] - frame_fit["cardW"] - 120) > 2):
-        fails.append(f"wallpaper frame no longer wraps the final card with 60px pads on all sides: {frame_fit}")
+    if frame_fit and (abs(frame_fit["frameH"] - frame_fit["cardH"] - 72) > 2 or abs(frame_fit["frameW"] - frame_fit["cardW"] - 72) > 2):
+        fails.append(f"wallpaper frame no longer wraps the final card with 36px pads on all sides: {frame_fit}")
 
     # ---- 20) opt-in vertical stack for 3+ images: #tweet-3pic (natural
     # ratios 0.5 / 1.0 / 1.333) defaults to the X-style 3-tile grid; checking
@@ -1255,8 +1255,8 @@ with sync_playwright() as p:
             if abs(got - expected) / expected >= 0.02:
                 fails.append(f"stacked tile {i} should be at natural ratio {expected:.3f}, got {got:.4f}")
         widths = [t["width"] for t in stacked["tiles"]]
-        if max(widths) - min(widths) > 1 or abs(widths[0] - 536) > 2:
-            fails.append(f"stacked tiles should all span the card's 536px content width, got {widths}")
+        if max(widths) - min(widths) > 1 or abs(widths[0] - 540) > 4:
+            fails.append(f"stacked tiles should all span the card's ~540px content width, got {widths}")
 
     page.evaluate(
         """() => {
@@ -1364,7 +1364,7 @@ with sync_playwright() as p:
               const host = document.getElementById('snapcard-host');
               const exportEl = host.__snapcardExportEl;
               if (!exportEl || exportEl.dataset.snapcardRole !== 'wallpaper-frame') return null;
-              const centerLayer = exportEl.querySelector('[data-snapcard-role="wallpaper-bg"]').nextElementSibling;
+              const centerLayer = exportEl.querySelector('[data-snapcard-role="wallpaper-center"]');
               return centerLayer.firstElementChild.style.backgroundColor;
             }"""
         )
@@ -1379,8 +1379,8 @@ with sync_playwright() as p:
     page.wait_for_timeout(800)
     dark_full = wallpaper_card_bg()
     print("    card bg after 黑 at 100%:", dark_full)
-    if dark_full != "rgb(0, 0, 0)":
-        fails.append(f"wallpaper card in dark at 100% opacity should be rgb(0, 0, 0), got {dark_full!r}")
+    if dark_full != "rgb(17, 19, 24)":
+        fails.append(f"wallpaper card in dark at 100% opacity should be rgb(17, 19, 24), got {dark_full!r}")
 
     page.evaluate(
         """() => {
@@ -1393,8 +1393,46 @@ with sync_playwright() as p:
     page.wait_for_timeout(800)
     dark_translucent = wallpaper_card_bg()
     print("    card bg after opacity 60%:", dark_translucent)
-    if dark_translucent != "rgba(0, 0, 0, 0.6)":
-        fails.append(f"wallpaper card in dark at 60% opacity should be rgba(0, 0, 0, 0.6), got {dark_translucent!r}")
+    if dark_translucent != "rgba(17, 19, 24, 0.6)":
+        fails.append(f"wallpaper card in dark at 60% opacity should be rgba(17, 19, 24, 0.6), got {dark_translucent!r}")
+
+    # ---- 23) wallpaper padding presets (24 / 36 / 56) & X official icons ----
+    page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const btn = host.shadowRoot.querySelector('[data-snapcard-role="wallpaper-pad-24"]');
+          if (btn) btn.click();
+        }"""
+    )
+    page.wait_for_timeout(800)
+    pad24_info = page.evaluate(
+        """() => {
+          const host = document.getElementById('snapcard-host');
+          const exportEl = host.__snapcardExportEl;
+          if (!exportEl) return null;
+          const clone = exportEl.cloneNode(true);
+          const probe = document.createElement('div');
+          Object.assign(probe.style, { position: 'fixed', left: '-9999px', top: '0' });
+          probe.appendChild(clone);
+          document.body.appendChild(probe);
+          const f = clone.getBoundingClientRect();
+          const c = clone.querySelector('[data-snapcard-role="wallpaper-center"]').firstElementChild.getBoundingClientRect();
+          const heartSvg = clone.querySelector('[data-snapcard-stat="heart"] svg');
+          const xMark = clone.querySelector('[data-snapcard-role="x-mark"] svg');
+          document.body.removeChild(probe);
+          return {
+            padX: Math.round((f.width - c.width) / 2),
+            padY: Math.round((f.height - c.height) / 2),
+            heartRule: heartSvg ? heartSvg.getAttribute('fill-rule') : null,
+            hasXMark: !!xMark,
+          };
+        }"""
+    )
+    print("23) wallpaper pad 24px + official icons check:", pad24_info)
+    if not pad24_info or pad24_info["padX"] != 24 or pad24_info["padY"] != 24:
+        fails.append(f"expected compact 24px wallpaper padding after clicking 紧凑, got {pad24_info}")
+    if not pad24_info or pad24_info["heartRule"] != "evenodd" or not pad24_info["hasXMark"]:
+        fails.append(f"expected X official heart (evenodd) and header X mark, got {pad24_info}")
 
 if console_errors:
     print("\nconsole errors captured:")

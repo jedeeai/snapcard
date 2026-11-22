@@ -91,6 +91,7 @@
 - `0.8.20.3`：复制按钮剪贴板手势时效修复＋modal 右上角中/EN 界面语言手动切换＋翻译后只显示译文（见上方关键决策）
 - `0.8.20.4`：修长推文/慢图预览与放大显示不全（decode 后再测量，见故障记录）＋媒体布局改版：单图全显、双图等高全显、3+ 图「图片竖排」开关（见上方关键决策）
 - `0.8.20.5`：壁纸模式卡片白/黑＋透明度（去重用途）＋翻译开关恒显示方向自适应＋中/EN 按钮挪独立顶行不再压图（见上方关键决策）
+- `0.11.22`：卡片视觉全面精修——壁纸外边距默认由 60px 缩至 36px 并新增「紧凑 24 / 适中 36 / 宽松 56」三档记忆切换（`storage.sync` key `wallpaperPadding`）；底部 4 枚互动符号换为 X 官方原版矢量路径（含严格对称 `fill-rule="evenodd"` 空心爱心，17px + 等宽数字垂直居中 + 28px 间距）；作者头部两行重构（昵称＋蓝V / `@handle · 日期`）＋右上角克制 X 官方来源标志；深色主题由死黑 `#000000` 升级为质感深炭灰 `#111318`；新增三层物理阴影、1px 微描边、半透明高光内边、正文 `@/#`/链接蓝色高亮及配图 14px 同心圆角描边。
 
 ## 复用来源（只抄不引用）
 
@@ -109,3 +110,7 @@
 - **同日 Wallpaper 模式预览里背景图不显示**：根因不在 content.js/render.js，而是 `tests/mock.html` 里 `chrome.runtime.getURL` 之前被我 mock 成返回一张 1x1 透明 data URI（是我为了让离线冒烟测试不发真实网络请求特意造的），杰哥的协调方截图验收时看到的「壁纸没铺上」其实是这张假图本身透明，不是产品代码的 bug。修复：mock 的 `getURL` 改成 `(path) => '../' + path`，指回 `tests/` 上一级的真实 `assets/bg-sequoia.webp`，实测背景 `<img>` `naturalWidth` 变成 2406（真实壁纸尺寸），预览截图也确认壁纸铺满、卡片带阴影居中。**顺带发现一个纯测试环境限制**：如果在这之后再跑一次完整 PNG 导出（`renderCardToPng`），`inlineImages()` 内部对背景图调用 `fetch(fileURL, {mode:'cors'})` 会被 Chrome 拒绝并打一条真实 console error（`URL scheme "file" is not supported`），这是 Chrome 对 `fetch()` 访问 `file://` 协议的硬限制，不是代码 bug——真实插件里背景图要么是 `data:`（用户自传壁纸，已经是内联的）要么是 `chrome-extension://`（内置默认壁纸，走 `web_accessible_resources` 声明过，`fetch()` 完全可用），都不会撞上这条限制。所以 smoke.py 里 Wallpaper 场景只验证「背景图在预览里真实解码成功」（`naturalWidth > 0`），没有让 Wallpaper 场景也跑一遍完整导出，避免把测试环境自身的协议限制误判成产品问题。
 - **2026-08-20（真实使用反馈）生成的卡片昵称后面多出「已收录」三个字**：根因是杰哥自己的另一个插件 x-track-badge 往推文 `User-Name` 里注入 `.xtb-badge`（内含 `<img alt="已收录">` 的 JA logo），SnapCard 的 `textWithEmoji()` 把一切 `<img>` 的 alt 当 emoji 文字拼接，于是注入徽章的 alt 被拼进了昵称；未收录账号的「+」徽章（`textContent` 是 `+`）同理会漏进来。修复：新增 `isForeignNode(el)` —— X 自己的 React 输出类名只有 `css-`/`r-` 前缀（或没有 class），元素只要挂了这套之外的任何类名就判定为第三方注入，`textWithEmoji` 递归、`extractNameAndHandle` 的直接子元素遍历、`findHandleNode` 三处统一跳过，顺带把用户装的其它注入型插件（翻译器等）也挡掉。**注意这也进了「X 改版高危点」性质的假设**：如果 X 未来改掉 css-/r- 类名方案，X 自己的元素会被误判为外来元素、昵称/正文提取直接变空——排查「卡片文字突然全空」时先查这里。回归测试：mock.html 第一条推文的 User-Name 里固定放了一个 `.xtb-badge`（alt=已收录），smoke.py 断言 shadow DOM 全文不含「已收录」；撤掉修复反证过，断言确实会红。
 - **2026-08-19（真实用户反馈）Wallpaper 四边 padding 不等，改固定 60px 后仍然不等**：一开始以为是「百分比 vs 固定值」的问题，改成 `WALLPAPER_PAD=60` 固定值后用新加的 smoke 断言一测，左右还是只有 20px（上下正常 60px）。真根因是 `buildWallpaperFrame` 返回的 frame 节点被塞进 `previewWrap`（`display:flex`）之后，没有显式设 `flexShrink:'0'`，默认 `flex-shrink:1` 会在横向（flex 主轴）把 720px 宽的 frame 压缩到跟 modal 面板差不多宽，纵向（非主轴）不受影响，压缩只发生在左右——这才是「上下边距明显大于左右」的真正机制，跟 padding 是百分比还是固定值无关，只是百分比值更大（原来 90px）让压缩量看起来更夸张。**教训：任何一个子元素被塞进 flex 容器、又要求它按精确像素渲染（不能被主轴挤压）时，必须显式 `flexShrink:0`，不能假设「反正我设了 width 就一定按这个宽度画」。** 修复：`wrapper` 加 `flexShrink:'0'`；smoke.py 新增 7b 断言直接量 frame/card 两个矩形的四边差值，四边必须相等且等于 60，这类「肉眼看着对，测出来才发现只有部分方向生效」的偏差以后能被自动挡住。
+
+## 分发渠道
+
+- Chrome Web Store：https://chromewebstore.google.com/detail/snapcard/lafmgemlagganbgomcopikckfaaehfeh（2026-08 已上架，对外推广用这个链接为主，GitHub 为辅）

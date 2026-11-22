@@ -38,6 +38,10 @@
   "stackImagesLabel": { "message": "图片竖排" },
   "cardColorLabel": { "message": "卡片" },
   "opacityLabel": { "message": "透明度" },
+  "paddingLabel": { "message": "边距" },
+  "paddingCompact": { "message": "紧凑" },
+  "paddingMedium": { "message": "适中" },
+  "paddingWide": { "message": "宽松" },
   "watermarkLabel": { "message": "在卡片上显示 SnapCard 署名" },
   "brandBarText": { "message": "X榜单 xbangdan.com 出品" },
   "brandLogoAlt": { "message": "X榜单" }

@@ -12,7 +12,7 @@
 - 点一下生成卡片：头像、昵称、@handle、正文、配图、互动数据
 - 三种卡片样式：白色、黑色、壁纸（卡片居中放在背景图上，带柔和阴影），选择会被记住
 - 壁纸样式内置 7 张原创渐变背景，也支持上传自己的图片（最多 6 张）。喜欢 macOS 官方壁纸的用户可以自行去苹果官网下载，再用「上传背景」用上（插件本身不内置任何苹果版权素材）
-- 壁纸样式下卡片本体可以选白色或黑色，透明度 30%–100% 随意调——配上自己的背景图，每个人做出来的卡片都独一无二
+- 壁纸样式下卡片本体可以选白色或黑色，透明度 30%–100% 随意调，外框边距支持紧凑（24px）／适中（36px）／宽松（56px）三档切换；配上自己的背景图，每个人做出来的卡片都独一无二
 - 一键翻译（谷歌翻译），方向自动：外语推文翻成中文，中文推文翻成英文，卡片只显示译文
 - 图片完整显示：单图按原始比例全显，双图并排自动等高，三张以上可开「图片竖排」一张接一张排下来
 - 可隐藏互动数据和时间，只留内容本身
@@ -80,7 +80,7 @@ Turn any post on X (Twitter) into a beautiful, shareable card — right from you
   Apple's site and add it via "Upload background" — the extension itself ships no
   Apple-copyrighted assets
 - In Wallpaper mode the card itself can be white or dark, with adjustable background
-  opacity (30–100%) — combined with your own wallpaper, every card you make is unique
+  opacity (30–100%) and three frame padding presets (Compact 24px / Medium 36px / Wide 56px) — combined with your own wallpaper, every card you make is unique
 - One-click translation (via Google Translate), direction-aware: foreign-language posts
   translate into Chinese, Chinese posts into English; the card shows only the translation
 - Images display in full: a single image at its natural ratio, two images side by side at

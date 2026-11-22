@@ -41,6 +41,10 @@
     stackImagesLabel: "Stack images",
     cardColorLabel: "Card",
     opacityLabel: "Opacity",
+    paddingLabel: "Padding",
+    paddingCompact: "Compact",
+    paddingMedium: "Medium",
+    paddingWide: "Wide",
     translateLabel: "Translate",
     translatingText: "Translating…",
     translateFailedText: "Couldn't reach the translation service",
@@ -669,6 +673,17 @@
   // opaque its background is (integer percent, 30–100; below 30 the text
   // gets hard to read against busy wallpapers). Both remembered.
   const VALID_CARD_THEMES = ["white", "dark"];
+  const WALLPAPER_PADDINGS = [
+    { value: 24, labelKey: "paddingCompact" },
+    { value: 36, labelKey: "paddingMedium" },
+    { value: 56, labelKey: "paddingWide" },
+  ];
+  const DEFAULT_WALLPAPER_PADDING = 36;
+
+  function sanitizeWallpaperPadding(v) {
+    const n = Number(v);
+    return WALLPAPER_PADDINGS.some((p) => p.value === n) ? n : DEFAULT_WALLPAPER_PADDING;
+  }
 
   function clampCardOpacity(v) {
     const n = Math.round(Number(v));
@@ -679,21 +694,26 @@
   function getWallpaperCardSettings() {
     return new Promise((resolve) => {
       try {
-        chrome.storage.sync.get({ wallpaperCardTheme: "white", wallpaperCardOpacity: 100 }, (res) =>
-          resolve({
-            theme: VALID_CARD_THEMES.includes(res.wallpaperCardTheme) ? res.wallpaperCardTheme : "white",
-            opacity: clampCardOpacity(res.wallpaperCardOpacity),
-          })
+        chrome.storage.sync.get(
+          { wallpaperCardTheme: "white", wallpaperCardOpacity: 100, wallpaperPadding: DEFAULT_WALLPAPER_PADDING },
+          (res) =>
+            resolve({
+              theme: VALID_CARD_THEMES.includes(res.wallpaperCardTheme) ? res.wallpaperCardTheme : "white",
+              opacity: clampCardOpacity(res.wallpaperCardOpacity),
+              padding: sanitizeWallpaperPadding(res.wallpaperPadding),
+            })
         );
       } catch (_) {
-        resolve({ theme: "white", opacity: 100 });
+        resolve({ theme: "white", opacity: 100, padding: DEFAULT_WALLPAPER_PADDING });
       }
     });
   }
 
-  function saveWallpaperCardSettings(theme, opacity) {
+  function saveWallpaperCardSettings(theme, opacity, padding) {
     try {
-      chrome.storage.sync.set({ wallpaperCardTheme: theme, wallpaperCardOpacity: opacity });
+      const payload = { wallpaperCardTheme: theme, wallpaperCardOpacity: opacity };
+      if (padding != null) payload.wallpaperPadding = sanitizeWallpaperPadding(padding);
+      chrome.storage.sync.set(payload);
     } catch (_) {
       // not fatal — just won't be remembered next time
     }
@@ -1070,6 +1090,7 @@
       stackImages: !!options.stackImages,
       wallpaperCardTheme: (options.wallpaperCard && options.wallpaperCard.theme) || "white",
       wallpaperCardOpacity: (options.wallpaperCard && options.wallpaperCard.opacity) || 100,
+      wallpaperPadding: sanitizeWallpaperPadding(options.wallpaperCard && options.wallpaperCard.padding),
       bgId: options.bgId || "aurora",
       exportEl: null, // the node render.js should actually export (card, or card+wallpaper frame)
     };
@@ -1086,8 +1107,19 @@
     // never gets a transform/scale of its own; see renderScaledPreview below
     // for why that separation matters.
     async function buildExportEl(cardData, cardOptions) {
-      const theme = state.style === "wallpaper" ? state.wallpaperCardTheme : state.style;
-      const card = window.SnapCard.buildCard(cardData, Object.assign({ theme }, cardOptions));
+      const isWallpaper = state.style === "wallpaper";
+      const theme = isWallpaper ? state.wallpaperCardTheme : state.style;
+      const card = window.SnapCard.buildCard(
+        cardData,
+        Object.assign(
+          {
+            theme,
+            inWallpaper: isWallpaper,
+            opacity: isWallpaper ? state.wallpaperCardOpacity : 100,
+          },
+          cardOptions
+        )
+      );
       // Both one-time measurements downstream (the wallpaper frame's
       // getBoundingClientRect here, the preview-scale probe in
       // renderScaledPreview) need the card's layout to be *final* — and a
@@ -1099,23 +1131,14 @@
       // layout (single image in full, 2-up equal height, stack mode) before
       // anything measures the card.
       window.SnapCard.finalizeMediaLayout(card);
-      if (state.style !== "wallpaper") return card;
-
-      // Translucent card over the wallpaper: only the card's own background
-      // gains alpha — text, borders and images keep full contrast. 100% is
-      // left untouched so the default renders exactly as before.
-      if (state.wallpaperCardOpacity < 100) {
-        const alpha = state.wallpaperCardOpacity / 100;
-        card.style.backgroundColor =
-          state.wallpaperCardTheme === "dark" ? `rgba(0, 0, 0, ${alpha})` : `rgba(255, 255, 255, ${alpha})`;
-      }
+      if (!isWallpaper) return card;
 
       const stage = document.createElement("div");
       Object.assign(stage.style, { position: "fixed", left: "-9999px", top: "0" });
       stage.appendChild(card);
       document.body.appendChild(stage);
       const bgUrl = resolveBackgroundUrl(state.bgId, state.customBgs);
-      const frame = window.SnapCard.buildWallpaperFrame(card, bgUrl); // reparents card out of stage
+      const frame = window.SnapCard.buildWallpaperFrame(card, bgUrl, { padding: state.wallpaperPadding }); // reparents card out of stage
       document.body.removeChild(stage);
       return frame;
     }
@@ -1354,11 +1377,51 @@
     });
     opacitySlider.addEventListener("change", () => {
       state.wallpaperCardOpacity = clampCardOpacity(opacitySlider.value);
-      saveWallpaperCardSettings(state.wallpaperCardTheme, state.wallpaperCardOpacity);
+      saveWallpaperCardSettings(state.wallpaperCardTheme, state.wallpaperCardOpacity, state.wallpaperPadding);
       rebuildCard();
     });
     cardControls.appendChild(opacitySlider);
     cardControls.appendChild(opacityValue);
+
+    const paddingText = document.createElement("span");
+    Object.assign(paddingText.style, { fontSize: "12px", color: "#536471", marginLeft: "8px" });
+    paddingText.textContent = t("paddingLabel");
+    cardControls.appendChild(paddingText);
+
+    const padButtons = {};
+    function paintPadButtons() {
+      WALLPAPER_PADDINGS.forEach(({ value }) => {
+        const active = state.wallpaperPadding === value;
+        Object.assign(padButtons[value].style, {
+          background: active ? "#1d9bf0" : "#eff3f4",
+          color: active ? "#ffffff" : "#0f1419",
+        });
+      });
+    }
+    WALLPAPER_PADDINGS.forEach(({ value, labelKey }) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.dataset.snapcardRole = `wallpaper-pad-${value}`;
+      btn.textContent = t(labelKey);
+      Object.assign(btn.style, {
+        border: "none",
+        borderRadius: "9999px",
+        padding: "4px 10px",
+        fontSize: "12px",
+        fontWeight: "600",
+        cursor: "pointer",
+      });
+      btn.addEventListener("click", () => {
+        if (state.wallpaperPadding === value) return;
+        state.wallpaperPadding = value;
+        saveWallpaperCardSettings(state.wallpaperCardTheme, state.wallpaperCardOpacity, state.wallpaperPadding);
+        paintPadButtons();
+        rebuildCard();
+      });
+      padButtons[value] = btn;
+      cardControls.appendChild(btn);
+    });
+    paintPadButtons();
 
     function updateBgControlsVisibility() {
       const display = state.style === "wallpaper" ? "flex" : "none";

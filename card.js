@@ -3,36 +3,53 @@
 // set inline (no external CSS) so render.js can serialize the node into an SVG
 // <foreignObject> without losing any styling.
 //
-// Exposed as window.SnapCard.buildCard(data, options) and
-// window.SnapCard.buildWallpaperFrame(cardEl, backgroundUrl).
+// Exposed as window.SnapCard.buildCard(data, options),
+// window.SnapCard.finalizeMediaLayout(root), and
+// window.SnapCard.buildWallpaperFrame(cardEl, backgroundUrl, options).
 
 (() => {
   "use strict";
 
   // One palette per card theme. "wallpaper" isn't a real palette — the
-  // wallpaper style is always the white card, just framed on a background
-  // image (see buildWallpaperFrame) — so buildCard only ever resolves to
-  // "white" or "dark".
+  // wallpaper style wraps either the white or dark card inside a background
+  // image frame (see buildWallpaperFrame) — so buildCard only ever resolves
+  // to "white" or "dark".
   const PALETTES = {
     white: {
       bg: "#ffffff",
+      bgRgb: "255, 255, 255",
       text: "#0f1419",
       subtle: "#536471",
-      hairline: "#eff3f4",
+      icon: "#536471",
+      hairline: "rgba(15, 20, 25, 0.08)",
+      border: "rgba(15, 20, 25, 0.09)",
+      wallpaperBorder: "rgba(255, 255, 255, 0.65)",
+      innerHighlight: "rgba(255, 255, 255, 0.85)",
+      xMark: "rgba(15, 20, 25, 0.24)",
       watermark: "#8b98a5",
       accent: "#1d9bf0",
+      avatarRing: "rgba(15, 20, 25, 0.08)",
+      mediaBorder: "rgba(15, 20, 25, 0.08)",
       avatarFallbackBg: "#e1e8ed",
       avatarFallbackFg: "#b7c2c9",
     },
     dark: {
-      bg: "#000000",
-      text: "#e7e9ea",
-      subtle: "#71767b",
-      hairline: "#2f3336",
-      watermark: "#536471",
-      accent: "#1d9bf0",
-      avatarFallbackBg: "#2f3336",
-      avatarFallbackFg: "#536471",
+      bg: "#111318",
+      bgRgb: "17, 19, 24",
+      text: "#f2f4f7",
+      subtle: "#8b98a5",
+      icon: "#8b98a5",
+      hairline: "rgba(255, 255, 255, 0.10)",
+      border: "rgba(255, 255, 255, 0.12)",
+      wallpaperBorder: "rgba(255, 255, 255, 0.16)",
+      innerHighlight: "rgba(255, 255, 255, 0.14)",
+      xMark: "rgba(255, 255, 255, 0.28)",
+      watermark: "#6b7785",
+      accent: "#38a8f5",
+      avatarRing: "rgba(255, 255, 255, 0.14)",
+      mediaBorder: "rgba(255, 255, 255, 0.10)",
+      avatarFallbackBg: "#252a32",
+      avatarFallbackFg: "#5c6672",
     },
   };
 
@@ -49,6 +66,8 @@
     const wrap = document.createElement("span");
     wrap.style.display = "inline-flex";
     wrap.style.alignItems = "center";
+    wrap.style.justifyContent = "center";
+    wrap.style.flexShrink = "0";
     wrap.innerHTML = markup;
     return wrap;
   }
@@ -108,29 +127,29 @@
     return String(n);
   }
 
-  // ---------- icons (inline, colorblind-neutral: single outline color + one blue accent) ----------
-  // Stroke color is parametrized per-palette (see statSpan) so the icons read
-  // correctly against both the white and dark card backgrounds.
+  // ---------- icons (X official vector paths, colorblind-neutral: single muted fill + one blue accent) ----------
 
-  const ICON_PATHS = {
+  const X_ICON_PATHS = {
     comment:
-      '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>',
+      "M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01zm8.005-6c-3.317 0-6.005 2.69-6.005 6 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z",
     repost:
-      '<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>',
+      "M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46-4.432 4.14-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z",
     heart:
-      '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z"/>',
-    views: '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+      "M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.552 1.12-.633 2.78.479 4.82 1.074 1.97 3.257 4.27 7.129 6.61 3.87-2.34 6.052-4.64 7.126-6.61 1.111-2.04 1.03-3.7.477-4.82-.561-1.13-1.666-1.84-2.908-1.91zM20.884 13.19c-1.351 2.48-4.001 5.12-8.384 7.67l-.5.3-.5-.3c-4.383-2.55-7.033-5.19-8.384-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.797 2.01 1.429-1.45 3.146-2.1 4.797-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z",
+    views:
+      "M8.75 21V3h2v18h-2zM18 21V8.5h2V21h-2zM4 21l.004-10h2L6 21H4zm9.248 0v-7h2v7h-2z",
+    xLogo:
+      "M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z",
   };
 
-  function iconSvg(kind, color) {
-    return (
-      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" ` +
-      `stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[kind]}</svg>`
-    );
+  function iconSvg(kind, color, size) {
+    const s = size || 17;
+    const rule = kind === "heart" ? ' fill-rule="evenodd"' : "";
+    return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="${color}"${rule} style="display:block"><path d="${X_ICON_PATHS[kind]}"/></svg>`;
   }
 
   function verifiedBadgeSvg(color) {
-    return `<svg width="16" height="16" viewBox="0 0 22 22" fill="${color}"><path d="M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.438-1.246.223-.607.27-1.264.14-1.897-.131-.634-.437-1.218-.882-1.687-.47-.445-1.053-.75-1.687-.882-.633-.13-1.29-.083-1.897.14-.273-.587-.704-1.086-1.245-1.44S11.647 1.62 11 1.604c-.646.017-1.273.213-1.813.568s-.969.854-1.24 1.44c-.608-.223-1.267-.272-1.902-.14-.635.13-1.22.436-1.69.882-.445.47-.749 1.055-.878 1.688-.13.633-.08 1.29.144 1.896-.587.274-1.087.705-1.443 1.245-.356.54-.555 1.17-.574 1.817.02.647.218 1.276.574 1.817.356.54.856.972 1.443 1.245-.224.606-.274 1.263-.144 1.896.13.634.433 1.218.877 1.688.47.446 1.055.75 1.69.882.635.132 1.294.083 1.902-.14.271.586.702 1.084 1.24 1.439.54.354 1.167.551 1.813.568.646-.016 1.276-.213 1.816-.567s.972-.853 1.245-1.44c.607.224 1.264.272 1.897.14.634-.13 1.217-.435 1.687-.88.445-.47.749-1.055.878-1.69.13-.633.081-1.29-.14-1.896.586-.274 1.084-.705 1.438-1.246.354-.54.552-1.17.57-1.816zM9.662 14.85l-3.429-3.428 1.293-1.302 2.072 2.072 4.4-4.794 1.347 1.246z"/></svg>`;
+    return `<svg width="17" height="17" viewBox="0 0 22 22" fill="${color}" style="display:block"><path d="M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.438-1.246.223-.607.27-1.264.14-1.897-.131-.634-.437-1.218-.882-1.687-.47-.445-1.053-.75-1.687-.882-.633-.13-1.29-.083-1.897.14-.273-.587-.704-1.086-1.245-1.44S11.647 1.62 11 1.604c-.646.017-1.273.213-1.813.568s-.969.854-1.24 1.44c-.608-.223-1.267-.272-1.902-.14-.635.13-1.22.436-1.69.882-.445.47-.749 1.055-.878 1.688-.13.633-.08 1.29.144 1.896-.587.274-1.087.705-1.443 1.245-.356.54-.555 1.17-.574 1.817.02.647.218 1.276.574 1.817.356.54.856.972 1.443 1.245-.224.606-.274 1.263-.144 1.896.13.634.433 1.218.877 1.688.47.446 1.055.75 1.69.882.635.132 1.294.083 1.902-.14.271.586.702 1.084 1.24 1.439.54.354 1.167.551 1.813.568.646-.016 1.276-.213 1.816-.567s.972-.853 1.245-1.44c.607.224 1.264.272 1.897.14.634-.13 1.217-.435 1.687-.88.445-.47.749-1.055.878-1.69.13-.633.081-1.29-.14-1.896.586-.274 1.084-.705 1.438-1.246.354-.54.552-1.17.57-1.816zM9.662 14.85l-3.429-3.428 1.293-1.302 2.072 2.072 4.4-4.794 1.347 1.246z"/></svg>`;
   }
 
   function avatarFallback(palette) {
@@ -142,22 +161,41 @@
     );
   }
 
+  // Safely highlight @mentions, #hashtags and URLs in body text using text
+  // nodes only (no innerHTML).
+  function renderHighlightedText(container, rawText, accentColor) {
+    const tokenRe = /(https?:\/\/[^\s]+|(?<![\w@])@[A-Za-z0-9_]{1,15}|#[^\s#.,!?;:，。！？；：、()（）[\]【】]+)/g;
+    let last = 0;
+    let match;
+    while ((match = tokenRe.exec(rawText)) !== null) {
+      if (match.index > last) {
+        container.appendChild(document.createTextNode(rawText.slice(last, match.index)));
+      }
+      const span = el("span", { color: accentColor, fontWeight: "500" }, { textContent: match[0] });
+      container.appendChild(span);
+      last = tokenRe.lastIndex;
+    }
+    if (last < rawText.length) {
+      container.appendChild(document.createTextNode(rawText.slice(last)));
+    }
+  }
+
   // ---------- media grid ----------
 
   function buildPlayBadge() {
     const badge = el("div", {
       position: "absolute",
-      right: "8px",
-      bottom: "8px",
-      background: "rgba(0,0,0,0.65)",
+      right: "10px",
+      bottom: "10px",
+      background: "rgba(15, 20, 25, 0.72)",
       color: "#ffffff",
       fontSize: "12px",
       fontWeight: "600",
-      padding: "3px 8px",
+      padding: "4px 10px",
       borderRadius: "9999px",
       display: "flex",
       alignItems: "center",
-      gap: "4px",
+      gap: "5px",
     });
     badge.innerHTML =
       '<svg width="10" height="10" viewBox="0 0 24 24" fill="#ffffff"><polygon points="6,4 20,12 6,20"/></svg><span>Video</span>';
@@ -185,11 +223,6 @@
       objectFit: "cover",
     });
     img.src = src;
-    // No crossOrigin here — this is the *visible* preview image. Setting it
-    // would make the <img> request go CORS-mode and risk a broken-image icon
-    // if a host doesn't answer the preflight cleanly. render.js's export
-    // pipeline clones the card and inlines every image as a data URL
-    // separately, so canvas-taint isn't a concern on this live node.
     holder.appendChild(img);
     if (withPlayBadge) holder.appendChild(buildPlayBadge());
     return holder;
@@ -198,21 +231,16 @@
   // Used for the single-image layout. When X's own displayed ratio was
   // captured (extractImages), it's set as an explicit CSS aspect-ratio so
   // the tile's height is fully determined by layout *before* the image has
-  // loaded — an image-natural-size-dependent height (the old height:auto
-  // behavior, kept only as the no-captured-ratio fallback) measures as ~0
-  // in any probe that runs before the network delivers the image, which is
-  // exactly what sized wallpaper frames and preview scaling wrong on long
-  // tweets (see the fault log). object-fit:cover + max-height still cap
-  // pathologically tall images either way.
+  // loaded. finalizeMediaLayout later locks it to the image's natural ratio
+  // with maxHeight: "none".
   function buildSingleImageTile(src, hasVideo, displayRatio) {
-    const holder = el("div", { position: "relative", overflow: "hidden", borderRadius: "16px" });
+    const holder = el("div", { position: "relative", overflow: "hidden" });
     const img = el("img", {
       width: "100%",
       height: "auto",
       maxHeight: "700px",
       display: "block",
       objectFit: "cover",
-      borderRadius: "16px",
     });
     if (displayRatio) img.style.aspectRatio = String(displayRatio);
     img.src = src;
@@ -221,33 +249,28 @@
     return holder;
   }
 
-  // Every cell always gets a concrete numeric ratio (never a bare
-  // parent-driven fallback) — this keeps the height-cap safety net below
-  // simple: it can scale *any* resolved ratio uniformly regardless of which
-  // branch produced it. Defaults approximate the pre-this-feature look for
-  // images X didn't give us a captured display ratio for.
   function resolveCellRatios(list, n) {
     if (n === 2) {
-      // X shows both images at the same height in a 2-up row — mirroring
-      // that means both cells share one ratio rather than each keeping its
-      // own (which would make two different-height cells despite being in
-      // the same visual row).
       const shared = list[0].aspectRatio || 1;
       return [shared, shared];
     }
     if (n === 3) {
       return [list[0].aspectRatio || 8 / 9, list[1].aspectRatio || 16 / 9, list[2].aspectRatio || 16 / 9];
     }
-    // n === 4
     return list.map((item) => item.aspectRatio || 1);
   }
 
-  function layoutMediaGrid(urls, ratios, hasVideo) {
+  function layoutMediaGrid(urls, ratios, hasVideo, palette) {
     const n = urls.length;
-    const wrap = el("div", { marginTop: "16px", borderRadius: "16px", overflow: "hidden" });
+    const wrap = el("div", {
+      marginTop: "14px",
+      borderRadius: "14px",
+      overflow: "hidden",
+      border: `1px solid ${palette.mediaBorder}`,
+    });
 
     if (n === 2) {
-      Object.assign(wrap.style, { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px" });
+      Object.assign(wrap.style, { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3px" });
       urls.forEach((src, i) => wrap.appendChild(buildGridTile(src, ratios[i], {}, hasVideo && i === 0)));
       return wrap;
     }
@@ -257,7 +280,7 @@
         display: "grid",
         gridTemplateColumns: "1fr 1fr",
         gridTemplateRows: "1fr 1fr",
-        gap: "4px",
+        gap: "3px",
       });
       wrap.appendChild(buildGridTile(urls[0], ratios[0], { gridRow: "1 / span 2" }, hasVideo));
       wrap.appendChild(buildGridTile(urls[1], ratios[1], {}, false));
@@ -270,40 +293,41 @@
       display: "grid",
       gridTemplateColumns: "1fr 1fr",
       gridTemplateRows: "1fr 1fr",
-      gap: "4px",
+      gap: "3px",
     });
     urls.forEach((src, i) => wrap.appendChild(buildGridTile(src, ratios[i], {}, hasVideo && i === 0)));
     return wrap;
   }
 
   const MEDIA_MAX_HEIGHT = 900; // logical px cap on the whole media area, pre-export-scale
-  const CARD_CONTENT_WIDTH = 536; // 600px card width minus 32px padding each side — fixed, every media grid renders at this width
+  const CARD_CONTENT_WIDTH = 542; // 600px card width minus 28px*2 horizontal padding minus 1px*2 border
 
-  function buildMediaGrid(images, hasVideo, stackImages) {
+  function buildMediaGrid(images, hasVideo, stackImages, palette) {
     if (!images || !images.length) return null;
     const list = images.slice(0, 4);
     const n = list.length;
 
     if (n === 1) {
-      const wrap = el("div", { marginTop: "16px" });
+      const wrap = el("div", {
+        marginTop: "14px",
+        borderRadius: "14px",
+        overflow: "hidden",
+        border: `1px solid ${palette.mediaBorder}`,
+      });
       wrap.dataset.snapcardMedia = "1";
       wrap.appendChild(buildSingleImageTile(list[0].url, hasVideo, list[0].aspectRatio));
       return wrap;
     }
 
-    // Opt-in vertical layout for 3+ images: every image full content width,
-    // stacked one after another, each shown in full at its own ratio (the
-    // captured timeline ratio is only the pre-load placeholder here — see
-    // finalizeMediaLayout). The 900px height cap deliberately does NOT apply:
-    // "show every image completely" is the whole point of this mode.
     if (stackImages && n >= 3) {
       const wrap = el("div", {
-        marginTop: "16px",
+        marginTop: "14px",
         display: "flex",
         flexDirection: "column",
-        gap: "4px",
-        borderRadius: "16px",
+        gap: "3px",
+        borderRadius: "14px",
         overflow: "hidden",
+        border: `1px solid ${palette.mediaBorder}`,
       });
       wrap.dataset.snapcardMedia = "stack";
       list.forEach((item, i) => wrap.appendChild(buildGridTile(item.url, item.aspectRatio || 16 / 9, {}, hasVideo && i === 0)));
@@ -312,16 +336,11 @@
 
     const urls = list.map((item) => item.url);
     let ratios = resolveCellRatios(list, n);
-    let wrap = layoutMediaGrid(urls, ratios, hasVideo);
+    let wrap = layoutMediaGrid(urls, ratios, hasVideo, palette);
 
-    // Safety net: mirroring X's real display ratio means a grid of very tall
-    // (e.g. 9:16) screenshots can end up taller than is reasonable for a
-    // card. Measure the grid's natural height at the card's fixed content
-    // width (mounted in a throwaway wrapper — never mutate `wrap`'s own
-    // style directly for offscreen positioning, see the render.js
-    // "position:fixed got serialized into the export" bug in the fault log)
-    // and if it exceeds the cap, scale every cell's ratio up uniformly
-    // (taller width:height ratio = shorter cell) until it fits, then rebuild.
+    // Safety net: measure natural height at the card's fixed content width in
+    // a throwaway offscreen wrapper and shrink ratios uniformly if taller than
+    // MEDIA_MAX_HEIGHT.
     const probe = el("div", { position: "fixed", left: "-9999px", top: "0", width: `${CARD_CONTENT_WIDTH}px` });
     probe.appendChild(wrap);
     document.body.appendChild(probe);
@@ -331,26 +350,13 @@
     if (naturalHeight > MEDIA_MAX_HEIGHT && naturalHeight > 0) {
       const factor = naturalHeight / MEDIA_MAX_HEIGHT;
       ratios = ratios.map((r) => r * factor);
-      wrap = layoutMediaGrid(urls, ratios, hasVideo);
+      wrap = layoutMediaGrid(urls, ratios, hasVideo, palette);
     }
 
     wrap.dataset.snapcardMedia = String(n);
     return wrap;
   }
 
-  // Re-derives the media layout from the images' *natural* sizes once those
-  // are known — content.js calls this right after awaiting image decode and
-  // before anything measures the card. Layout spec (2026-08-20 user
-  // decision): 1 image → shown in full at the card's content width (its own
-  // natural ratio, no max-height crop — a very tall screenshot simply makes
-  // a tall card); 2 images → side by side at equal height with each image
-  // fully visible, the two column widths split proportionally to the two
-  // natural ratios (equal height falls out of the math: colWidth_i ∝ r_i,
-  // height_i = colWidth_i / r_i = same for both); "stack" (the opt-in 3+
-  // vertical mode) → every tile at its own natural ratio, full width. The
-  // 3/4-image grids keep mirroring X's displayed crop and aren't touched.
-  // Everything set before this (captured timeline ratios) is just the
-  // pre-load placeholder so early layout isn't 0px tall.
   function finalizeMediaLayout(root) {
     const wrap = root.querySelector("[data-snapcard-media]");
     if (!wrap) return;
@@ -391,60 +397,102 @@
     const span = el("span", {
       display: "inline-flex",
       alignItems: "center",
-      gap: "4px",
-      color: palette.subtle,
-      fontSize: "13px",
+      gap: "6px",
+      color: palette.icon,
+      fontSize: "13.5px",
+      fontWeight: "500",
+      lineHeight: "1",
+      fontVariantNumeric: "tabular-nums",
     });
-    span.appendChild(svgEl(iconSvg(kind, palette.subtle)));
-    const num = el("span", {}, { textContent: formatCount(value || 0) });
+    span.dataset.snapcardStat = kind;
+    span.appendChild(svgEl(iconSvg(kind, palette.icon, 17)));
+    const num = el(
+      "span",
+      {
+        display: "inline-block",
+        lineHeight: "1",
+      },
+      { textContent: formatCount(value || 0) }
+    );
     span.appendChild(num);
     return span;
   }
 
   // ---------- main builder ----------
 
-  // options: { watermark: boolean, theme: "white" | "dark" | "wallpaper" }
-  // "wallpaper" resolves to the white palette here — the wallpaper framing
-  // itself is a separate step, see buildWallpaperFrame below.
+  // options: {
+  //   watermark: boolean,
+  //   theme: "white" | "dark",
+  //   inWallpaper: boolean,
+  //   opacity: number (30..100, default 100),
+  //   hideStats: boolean,
+  //   hideTime: boolean,
+  //   stackImages: boolean,
+  //   showXMark: boolean (default true),
+  //   locale: string
+  // }
   function buildCard(data, options) {
     data = data || {};
     options = options || {};
-    const palette = PALETTES[options.theme === "dark" ? "dark" : "white"];
+    const themeKey = options.theme === "dark" ? "dark" : "white";
+    const palette = PALETTES[themeKey];
+    const inWallpaper = !!options.inWallpaper;
+    const opacity = options.opacity != null ? options.opacity : 100;
+    const bgColor = opacity < 100 ? `rgba(${palette.bgRgb}, ${opacity / 100})` : palette.bg;
 
     const card = el("div", {
       position: "relative",
       width: "600px",
       boxSizing: "border-box",
-      background: palette.bg,
+      backgroundColor: bgColor,
       borderRadius: "20px",
-      padding: "32px",
-      fontFamily: '-apple-system, "PingFang SC", "Segoe UI", sans-serif',
+      padding: "26px 28px 22px",
+      border: `1px solid ${inWallpaper ? palette.wallpaperBorder : palette.border}`,
+      boxShadow: inWallpaper
+        ? `inset 0 1px 0 ${palette.innerHighlight}, 0 2px 4px rgba(0, 0, 0, 0.06), 0 14px 30px -6px rgba(0, 0, 0, 0.22), 0 26px 56px -14px rgba(0, 0, 0, 0.28)`
+        : "none",
+      fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Segoe UI", sans-serif',
+      WebkitFontSmoothing: "antialiased",
       color: palette.text,
     });
 
     // ----- header -----
-    const header = el("div", { display: "flex", alignItems: "center", gap: "12px" });
+    const header = el("div", {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "12px",
+    });
+
+    const authorLeft = el("div", {
+      display: "flex",
+      alignItems: "center",
+      gap: "12px",
+      minWidth: "0",
+      flex: "1",
+    });
+
     const avatar = el("img", {
-      width: "48px",
-      height: "48px",
+      width: "46px",
+      height: "46px",
       borderRadius: "50%",
       objectFit: "cover",
       flexShrink: "0",
       background: palette.avatarFallbackBg,
+      boxShadow: `0 0 0 1px ${palette.avatarRing}`,
     });
     avatar.src = data.avatar || avatarFallback(palette);
-    header.appendChild(avatar);
+    authorLeft.appendChild(avatar);
 
-    const nameCol = el("div", { display: "flex", flexDirection: "column", minWidth: "0" });
-    // flexWrap so a long display name pushes the date down to its own line
-    // instead of overflowing the card — the date is the least essential item
-    // in this row, so it's the one that's allowed to drop.
-    const nameRow = el("div", { display: "flex", alignItems: "center", flexWrap: "wrap", rowGap: "2px" });
+    const nameCol = el("div", { display: "flex", flexDirection: "column", gap: "2px", minWidth: "0" });
+    const nameRow = el("div", { display: "flex", alignItems: "center", gap: "5px", minWidth: "0" });
     const nameSpan = el(
       "span",
       {
         fontWeight: "700",
         fontSize: "16px",
+        lineHeight: "1.3",
+        letterSpacing: "-0.01em",
         color: palette.text,
         wordBreak: "break-word",
       },
@@ -452,93 +500,126 @@
     );
     nameRow.appendChild(nameSpan);
     if (data.verified) {
-      const badge = svgEl(verifiedBadgeSvg(palette.accent));
-      badge.style.marginLeft = "4px";
-      nameRow.appendChild(badge);
+      nameRow.appendChild(svgEl(verifiedBadgeSvg(palette.accent)));
     }
-    // Date moved up here (next to the name/badge) per spec — the footer now
-    // only carries the interaction stats. options.hideTime skips creating
-    // this node entirely (not display:none), same pattern as hideStats.
-    if (!options.hideTime) {
-      const dateSpan = el(
-        "span",
-        {
-          marginLeft: "8px",
-          fontSize: "13px",
-          color: palette.subtle,
-          whiteSpace: "nowrap",
-        },
-        { textContent: formatTime(data.datetime, options.locale) }
-      );
-      dateSpan.dataset.snapcardRole = "date";
-      nameRow.appendChild(dateSpan);
+
+    const metaRow = el("div", {
+      display: "flex",
+      alignItems: "center",
+      flexWrap: "wrap",
+      gap: "6px",
+      fontSize: "13.5px",
+      lineHeight: "1.35",
+      color: palette.subtle,
+    });
+    const handleSpan = el("span", {}, { textContent: data.handle || "" });
+    metaRow.appendChild(handleSpan);
+
+    if (!options.hideTime && data.datetime) {
+      const formatted = formatTime(data.datetime, options.locale);
+      if (formatted) {
+        const dot = el("span", { opacity: "0.6" }, { textContent: "·" });
+        const dateSpan = el(
+          "span",
+          { whiteSpace: "nowrap" },
+          { textContent: formatted }
+        );
+        dateSpan.dataset.snapcardRole = "date";
+        metaRow.appendChild(dot);
+        metaRow.appendChild(dateSpan);
+      }
     }
-    const handleSpan = el(
-      "span",
-      { color: palette.subtle, fontSize: "14px" },
-      { textContent: data.handle || "" }
-    );
+
     nameCol.appendChild(nameRow);
-    nameCol.appendChild(handleSpan);
-    header.appendChild(nameCol);
+    nameCol.appendChild(metaRow);
+    authorLeft.appendChild(nameCol);
+    header.appendChild(authorLeft);
+
+    if (options.showXMark !== false) {
+      const xBadge = el("div", {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        alignSelf: "flex-start",
+        marginTop: "2px",
+        flexShrink: "0",
+      });
+      xBadge.dataset.snapcardRole = "x-mark";
+      xBadge.appendChild(svgEl(iconSvg("xLogo", palette.xMark, 19)));
+      header.appendChild(xBadge);
+    }
+
     card.appendChild(header);
 
     // ----- body text -----
-    // When a translation is active the card shows *only* the translation
-    // (per user feedback: a shared card should read in one language, not as
-    // a bilingual original-plus-translation stack). Exactly one text block
-    // exists either way — role "text-translated" replaces "text-original".
-    const body = el("div", { marginTop: "16px" });
+    // When a translation is active the card shows *only* the translation.
+    const body = el("div", { marginTop: "15px" });
     const textBlock = el("div", {
-      fontSize: "17px",
-      lineHeight: "1.65",
+      fontSize: "16.5px",
+      lineHeight: "1.68",
+      letterSpacing: "0.008em",
       whiteSpace: "pre-wrap",
       wordBreak: "break-word",
       color: palette.text,
     });
     if (data.translatedText) {
       textBlock.dataset.snapcardRole = "text-translated";
-      textBlock.textContent = data.translatedText;
+      renderHighlightedText(textBlock, data.translatedText, palette.accent);
     } else {
       textBlock.dataset.snapcardRole = "text-original";
-      textBlock.textContent = data.text || "";
+      renderHighlightedText(textBlock, data.text || "", palette.accent);
     }
     body.appendChild(textBlock);
     card.appendChild(body);
 
     // ----- media -----
-    const media = buildMediaGrid(data.images, !!data.hasVideo, !!options.stackImages);
+    const media = buildMediaGrid(data.images, !!data.hasVideo, !!options.stackImages, palette);
     if (media) card.appendChild(media);
 
-    // ----- footer ----- (date now lives up in the header row; footer is stats-only)
-    // options.hideStats skips the whole footer — divider included — so the
-    // card ends with whatever came before it (body text, or media).
+    // ----- footer -----
     if (!options.hideStats) {
       const footer = el("div", {
-        marginTop: "16px",
-        paddingTop: "12px",
+        marginTop: "18px",
+        paddingTop: "14px",
         borderTop: `1px solid ${palette.hairline}`,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
       });
       footer.dataset.snapcardRole = "footer";
 
       const stats = data.stats || {};
-      const statsRow = el("div", { display: "flex", alignItems: "center", gap: "16px" });
+      const statsRow = el("div", { display: "flex", alignItems: "center", gap: "28px" });
       statsRow.appendChild(statSpan("comment", stats.replies, palette));
       statsRow.appendChild(statSpan("repost", stats.reposts, palette));
       statsRow.appendChild(statSpan("heart", stats.likes, palette));
       statsRow.appendChild(statSpan("views", stats.views, palette));
       footer.appendChild(statsRow);
-      card.appendChild(footer);
-    }
 
-    // ----- watermark -----
-    if (options.watermark) {
+      if (options.watermark) {
+        const wm = el(
+          "span",
+          {
+            fontSize: "11.5px",
+            fontWeight: "500",
+            letterSpacing: "0.02em",
+            color: palette.watermark,
+          },
+          { textContent: "SnapCard" }
+        );
+        footer.appendChild(wm);
+      }
+
+      card.appendChild(footer);
+    } else if (options.watermark) {
       const wm = el(
         "div",
         {
-          marginTop: "8px",
+          marginTop: "12px",
           textAlign: "right",
-          fontSize: "11px",
+          fontSize: "11.5px",
+          fontWeight: "500",
+          letterSpacing: "0.02em",
           color: palette.watermark,
         },
         { textContent: "SnapCard" }
@@ -551,42 +632,29 @@
 
   // ---------- wallpaper frame ----------
 
-  // Fixed equal padding on all four sides — NOT a percentage of the card's
-  // own size. A percentage-based pad made tall (portrait-ish) cards end up
-  // with visibly larger top/bottom margins than left/right, which is what a
-  // real screenshot from a user caught; a flat pixel value keeps all four
-  // sides identical regardless of the card's aspect ratio.
-  const WALLPAPER_PAD = 60;
+  // Default equal padding on all four sides (compact 24 / medium 36 / wide 56).
+  // Trimmed from the old 60px so the tweet card stays the visual hero while the
+  // backdrop gradient still frames it cleanly.
+  const WALLPAPER_PAD = 36;
 
-  // Wraps an already-mounted (laid out) card element in a background-image
-  // frame: canvas padded WALLPAPER_PAD px on each side, background image
-  // cover-cropped to fill it, card given a soft drop shadow. Must be called
-  // after cardEl is attached to a live, visible document — getBoundingClientRect
-  // needs real layout to measure against.
-  function buildWallpaperFrame(cardEl, backgroundUrl) {
+  function buildWallpaperFrame(cardEl, backgroundUrl, options) {
+    options = options || {};
+    const pad = typeof options.padding === "number" && options.padding >= 0 ? Math.round(options.padding) : WALLPAPER_PAD;
+
     const rect = cardEl.getBoundingClientRect();
     const w = Math.max(1, Math.round(rect.width));
     const h = Math.max(1, Math.round(rect.height));
 
     const wrapper = el("div", {
       position: "relative",
-      width: `${w + WALLPAPER_PAD * 2}px`,
-      height: `${h + WALLPAPER_PAD * 2}px`,
-      // Prevent a flexbox ancestor (the modal's preview area) from shrinking
-      // this below its intended width to fit the panel's own max-width. A
-      // flex row only compresses the main (horizontal) axis, so without this
-      // the left/right padding would get visibly squeezed while top/bottom
-      // stayed at the full WALLPAPER_PAD — the exact asymmetry a real user
-      // screenshot caught.
+      width: `${w + pad * 2}px`,
+      height: `${h + pad * 2}px`,
       flexShrink: "0",
       boxSizing: "border-box",
       overflow: "hidden",
     });
     wrapper.dataset.snapcardRole = "wallpaper-frame";
 
-    // Background layer: a plain <img> (not CSS background-image) so
-    // render.js's existing "find every <img> and inline it as a data URL"
-    // pipeline picks it up automatically, no special-casing needed.
     const bg = el("img", {
       position: "absolute",
       inset: "0",
@@ -599,6 +667,17 @@
     bg.src = backgroundUrl;
     wrapper.appendChild(bg);
 
+    // Subtle radial light & depth vignette over the backdrop (pure CSS, safe
+    // for SVG foreignObject export).
+    const vignette = el("div", {
+      position: "absolute",
+      inset: "0",
+      background:
+        "radial-gradient(circle at 20% 15%, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0) 48%), radial-gradient(circle at 85% 90%, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0) 55%)",
+      pointerEvents: "none",
+    });
+    wrapper.appendChild(vignette);
+
     const centerLayer = el("div", {
       position: "absolute",
       inset: "0",
@@ -606,9 +685,9 @@
       alignItems: "center",
       justifyContent: "center",
     });
-    cardEl.style.boxShadow = "0 25px 50px rgba(0, 0, 0, 0.35)";
+    centerLayer.dataset.snapcardRole = "wallpaper-center";
     cardEl.style.flexShrink = "0";
-    centerLayer.appendChild(cardEl); // reparents cardEl out of its old position
+    centerLayer.appendChild(cardEl);
     wrapper.appendChild(centerLayer);
 
     return wrapper;

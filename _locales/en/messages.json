@@ -38,6 +38,10 @@
   "stackImagesLabel": { "message": "Stack images" },
   "cardColorLabel": { "message": "Card" },
   "opacityLabel": { "message": "Opacity" },
+  "paddingLabel": { "message": "Padding" },
+  "paddingCompact": { "message": "Compact" },
+  "paddingMedium": { "message": "Medium" },
+  "paddingWide": { "message": "Wide" },
   "watermarkLabel": { "message": "Show the SnapCard watermark on cards" },
   "brandBarText": { "message": "Made by xbangdan.com" },
   "brandLogoAlt": { "message": "xbangdan" }
